@@ -87,3 +87,49 @@ class PatchEmbed(nn.Module):
         nn.init.uniform_(self.proj.weight, -math.sqrt(k), math.sqrt(k))
         if self.proj.bias is not None:
             nn.init.uniform_(self.proj.bias, -math.sqrt(k), math.sqrt(k))
+
+
+class PatchEmbed3D(nn.Module):
+    """
+    3D volume to patch embedding: (B,C,D,H,W) -> (B,D',H',W',embed_dim)
+
+    The depth patch size d_patch is independent of the spatial patch size,
+    allowing anisotropic tokenisation (e.g. d_patch=2, patch_size=16).
+    """
+
+    def __init__(
+        self,
+        patch_size: Union[int, Tuple[int, int]] = 16,
+        d_patch: int = 2,
+        in_chans: int = 1,
+        embed_dim: int = 768,
+        norm_layer: Callable | None = None,
+    ) -> None:
+        super().__init__()
+        patch_HW = make_2tuple(patch_size)
+        self.patch_size = patch_HW
+        self.d_patch = d_patch
+        self.in_chans = in_chans
+        self.embed_dim = embed_dim
+
+        self.proj = nn.Conv3d(
+            in_chans,
+            embed_dim,
+            kernel_size=(d_patch, patch_HW[0], patch_HW[1]),
+            stride=(d_patch, patch_HW[0], patch_HW[1]),
+        )
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: (B, C, D, H, W)
+        x = self.proj(x)  # (B, embed_dim, D', H', W')
+        # Rearrange to (B, D', H', W', embed_dim) to mirror PatchEmbed's flatten_embedding=False output
+        x = x.permute(0, 2, 3, 4, 1).contiguous()
+        x = self.norm(x)
+        return x
+
+    def reset_parameters(self):
+        k = 1 / (self.in_chans * self.d_patch * (self.patch_size[0] ** 2))
+        nn.init.uniform_(self.proj.weight, -math.sqrt(k), math.sqrt(k))
+        if self.proj.bias is not None:
+            nn.init.uniform_(self.proj.bias, -math.sqrt(k), math.sqrt(k))

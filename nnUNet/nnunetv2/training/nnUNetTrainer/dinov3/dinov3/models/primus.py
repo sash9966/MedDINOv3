@@ -26,7 +26,7 @@ class PatchDecode(nn.Module):
 
     def __init__(
         self,
-        patch_size: int, 
+        patch_size: int,
         embed_dim: int,
         out_channels: int,
         norm=LayerNormNd,
@@ -106,9 +106,10 @@ class Primus(AbstractDynamicNetworkArchitectures):
 
     def compute_conv_feature_map_size(self, input_size):
         raise NotImplementedError("yuck")
-    
+
 
 class Primus_Multiscale(AbstractDynamicNetworkArchitectures):
+
 
     def __init__(
         self,
@@ -142,6 +143,108 @@ class Primus_Multiscale(AbstractDynamicNetworkArchitectures):
         hier = torch.cat(hier, dim=1)
         dec_out = self.up_projection(hier)
         return dec_out
+
+    def compute_conv_feature_map_size(self, input_size):
+        raise NotImplementedError("yuck")
+
+
+class PatchDecode3D(nn.Module):
+    """
+    3D counterpart of PatchDecode.
+
+    Upsamples from (B, embed_dim, D', H', W') to (B, out_channels, D, H, W) where
+    D = D' * d_patch and H = H' * patch_size, W = W' * patch_size.
+
+    Both patch_size and d_patch must be powers of 2, with d_patch <= patch_size.
+
+    Upsampling schedule across n = log2(patch_size) total stages:
+      - First log2(d_patch) stages use stride (2, 2, 2) — upsample depth + spatial
+      - Remaining stages use stride (1, 2, 2) — upsample spatial only
+    """
+
+    def __init__(
+        self,
+        patch_size: int,
+        d_patch: int,
+        embed_dim: int,
+        out_channels: int,
+        norm=LayerNormNd,
+        activation=nn.GELU,
+    ):
+        super().__init__()
+        assert patch_size > 0
+        n = int(math.log2(patch_size))
+        assert 2 ** n == patch_size and n >= 1, "patch_size must be a power of 2"
+        n_depth = int(math.log2(d_patch)) if d_patch > 1 else 0
+        assert 2 ** n_depth == d_patch, "d_patch must be a power of 2"
+        assert n_depth <= n, "d_patch must be <= patch_size"
+
+        ch = [embed_dim]
+        for _ in range(n):
+            ch.append(ch[-1] // 2)
+        ch.append(out_channels)
+
+        stages = []
+        for i in range(n):
+            stride = (2, 2, 2) if i < n_depth else (1, 2, 2)
+            stages.append(
+                nn.Sequential(
+                    nn.ConvTranspose3d(ch[i], ch[i + 1], kernel_size=stride, stride=stride),
+                    norm(ch[i + 1]),
+                    activation(),
+                )
+            )
+        stages.append(nn.Conv3d(ch[-2], ch[-1], kernel_size=1))
+        self.decode = nn.Sequential(*stages)
+
+    def forward(self, x):
+        """Input: (B, embed_dim, D', H', W')"""
+        return self.decode(x)
+
+
+class Primus_Multiscale3D(AbstractDynamicNetworkArchitectures):
+    """
+    3D version of Primus_Multiscale. Accepts (B, 1, D, H, W) and returns
+    (B, num_classes, D, H, W). Uses DinoVisionTransformer3D as encoder
+    and PatchDecode3D as decoder.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        patch_embed_size: int,
+        d_patch: int,
+        num_classes: int,
+        decoder_norm=LayerNormNd,
+        decoder_act=nn.GELU,
+        dino_encoder=None,
+        interaction_indices=None,
+    ):
+        super().__init__()
+        if interaction_indices is None:
+            interaction_indices = [2, 5, 8, 11]
+
+        self.up_projection = PatchDecode3D(
+            patch_size=patch_embed_size,
+            d_patch=d_patch,
+            embed_dim=embed_dim * len(interaction_indices),
+            out_channels=num_classes,
+            norm=decoder_norm,
+            activation=decoder_act,
+        )
+        self.dino_encoder = dino_encoder
+        self.decoder = Decoder()
+        self.up_projection.apply(InitWeights_He(1e-2))
+        self.interaction_indices = interaction_indices
+
+    def forward(self, x, ret_mask=False):
+        # x: (B, 1, D, H, W)
+        assert x.shape[1] == 1
+        hier = self.dino_encoder.get_intermediate_layers(
+            x, n=self.interaction_indices, reshape=True
+        )  # list of (B, embed_dim, D', H', W')
+        hier = torch.cat(hier, dim=1)  # (B, embed_dim*4, D', H', W')
+        return self.up_projection(hier)  # (B, num_classes, D, H, W)
 
     def compute_conv_feature_map_size(self, input_size):
         raise NotImplementedError("yuck")

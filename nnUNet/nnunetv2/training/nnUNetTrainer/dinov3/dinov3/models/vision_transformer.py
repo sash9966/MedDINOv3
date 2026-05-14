@@ -11,7 +11,7 @@ import torch
 import torch.nn.init
 from torch import Tensor, nn
 
-from dinov3.layers import LayerScale, Mlp, PatchEmbed, RMSNorm, RopePositionEmbedding, SelfAttentionBlock, SwiGLUFFN
+from dinov3.layers import LayerScale, Mlp, PatchEmbed, PatchEmbed3D, RMSNorm, RopePositionEmbedding, SelfAttentionBlock, SwiGLUFFN
 from dinov3.utils import named_apply
 
 logger = logging.getLogger("dinov3")
@@ -407,6 +407,161 @@ def vit_7b(patch_size=16, **kwargs):
         depth=40,
         num_heads=32,
         ffn_ratio=3,
+        **kwargs,
+    )
+    return model
+
+
+class DinoVisionTransformer3D(DinoVisionTransformer):
+    """
+    3D extension of DinoVisionTransformer using weight-inflated 3D patch embedding.
+
+    Strategy:
+    - `PatchEmbed3D` tokenises (B, C, D, H, W) into (B, D'*H'*W', embed_dim) tokens.
+    - A learned depth positional embedding (nn.Embedding) is added per depth-slice before
+      the transformer, encoding which slice a token belongs to.
+    - The existing 2D RoPE is preserved and tiled over the depth dimension so each token
+      at (d, h, w) receives the same (h, w) rotary encoding as the 2D model would give it.
+      This lets us load pretrained RoPE weights unchanged.
+    - All transformer blocks, norms, and the head are identical to the 2D model.
+    """
+
+    def __init__(
+        self,
+        *,
+        patch_size: int = 16,
+        d_patch: int = 2,
+        max_depth_tokens: int = 128,
+        in_chans: int = 1,
+        **kwargs,
+    ):
+        # Initialise the 2D parent; its patch_embed is overwritten immediately below.
+        super().__init__(patch_size=patch_size, in_chans=in_chans, **kwargs)
+
+        self.d_patch = d_patch
+        embed_dim = self.embed_dim
+
+        # Replace the 2D patch embedding with a 3D one.
+        self.patch_embed = PatchEmbed3D(
+            patch_size=patch_size,
+            d_patch=d_patch,
+            in_chans=in_chans,
+            embed_dim=embed_dim,
+        )
+
+        # Learned 1-D depth positional embedding (independent of H/W).
+        self.depth_pos_embed = nn.Embedding(max_depth_tokens, embed_dim)
+        nn.init.trunc_normal_(self.depth_pos_embed.weight, std=0.02)
+
+    # ------------------------------------------------------------------
+    # Token preparation
+    # ------------------------------------------------------------------
+
+    def prepare_tokens_with_masks(self, x: Tensor, masks=None) -> Tuple[Tensor, Tuple[int, int, int]]:
+        # x: (B, C, D, H, W)
+        x = self.patch_embed(x)          # (B, D', H', W', embed_dim)
+        B, D, H, W, _ = x.shape
+
+        # Add depth positional embedding: each slice d gets depth_pos_embed[d].
+        depth_idx = torch.arange(D, device=x.device)
+        depth_pe = self.depth_pos_embed(depth_idx)  # (D', embed_dim)
+        x = x + depth_pe[:, None, None, :]           # broadcast over H', W'
+
+        x = x.flatten(1, 3)  # (B, D'*H'*W', embed_dim)
+
+        if masks is not None:
+            x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x)
+            cls_token = self.cls_token
+        else:
+            cls_token = self.cls_token + 0 * self.mask_token
+
+        if self.n_storage_tokens > 0:
+            storage_tokens = self.storage_tokens
+        else:
+            storage_tokens = torch.empty(
+                1, 0, cls_token.shape[-1],
+                dtype=cls_token.dtype, device=cls_token.device,
+            )
+
+        x = torch.cat(
+            [cls_token.expand(B, -1, -1), storage_tokens.expand(B, -1, -1), x],
+            dim=1,
+        )
+        return x, (D, H, W)
+
+    # ------------------------------------------------------------------
+    # Intermediate layer extraction (used by Primus decoder)
+    # ------------------------------------------------------------------
+
+    def _get_intermediate_layers_not_chunked(self, x: Tensor, n=1) -> List[Tensor]:
+        x, (D, H, W) = self.prepare_tokens_with_masks(x)
+        output, total_block_len = [], len(self.blocks)
+        blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
+        # Build rope once — it only depends on H/W, not on the block or token values.
+        if self.rope_embed is not None:
+            sin_hw, cos_hw = self.rope_embed(H=H, W=W)  # each (H*W, D_head)
+            sin_3d = sin_hw.unsqueeze(0).expand(D, -1, -1).reshape(D * H * W, -1)
+            cos_3d = cos_hw.unsqueeze(0).expand(D, -1, -1).reshape(D * H * W, -1)
+            rope_sincos = (sin_3d, cos_3d)
+        else:
+            rope_sincos = None
+        for i, blk in enumerate(self.blocks):
+            x = blk(x, rope_sincos)
+            if i in blocks_to_take:
+                output.append(x)
+        assert len(output) == len(blocks_to_take)
+        return output
+
+    def get_intermediate_layers(
+        self,
+        x: Tensor,
+        *,
+        n=1,
+        reshape: bool = False,
+        return_class_token: bool = False,
+        return_extra_tokens: bool = False,
+        norm: bool = True,
+    ):
+        outputs = self._get_intermediate_layers_not_chunked(x, n)
+        if norm:
+            outputs_normed = []
+            for out in outputs:
+                if self.untie_cls_and_patch_norms:
+                    x_norm_cls = self.cls_norm(out[:, : self.n_storage_tokens + 1])
+                    x_norm_patch = self.norm(out[:, self.n_storage_tokens + 1 :])
+                    outputs_normed.append(torch.cat((x_norm_cls, x_norm_patch), dim=1))
+                else:
+                    outputs_normed.append(self.norm(out))
+            outputs = outputs_normed
+        class_tokens = [out[:, 0] for out in outputs]
+        extra_tokens = [out[:, 1 : self.n_storage_tokens + 1] for out in outputs]
+        outputs = [out[:, self.n_storage_tokens + 1 :] for out in outputs]
+        if reshape:
+            B, _, D_in, H_in, W_in = x.shape
+            D = D_in // self.d_patch
+            H = H_in // self.patch_size
+            W = W_in // self.patch_size
+            outputs = [
+                out.reshape(B, D, H, W, -1).permute(0, 4, 1, 2, 3).contiguous()
+                for out in outputs
+            ]
+        if not return_class_token and not return_extra_tokens:
+            return tuple(outputs)
+        elif return_class_token and not return_extra_tokens:
+            return tuple(zip(outputs, class_tokens))
+        elif not return_class_token and return_extra_tokens:
+            return tuple(zip(outputs, extra_tokens))
+        else:
+            return tuple(zip(outputs, class_tokens, extra_tokens))
+
+
+def vit_base_3d(patch_size=16, d_patch=2, **kwargs):
+    model = DinoVisionTransformer3D(
+        patch_size=patch_size,
+        d_patch=d_patch,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
         **kwargs,
     )
     return model

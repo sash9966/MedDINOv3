@@ -1600,8 +1600,128 @@ class meddinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
         missing, unexpected = model.load_state_dict(state_dict, strict=True)
 
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus_Multiscale
-        primus = Primus_Multiscale(embed_dim=768, patch_embed_size=16, num_classes=num_output_channels, 
+        primus = Primus_Multiscale(embed_dim=768, patch_embed_size=16, num_classes=num_output_channels,
                                    dino_encoder=model, interaction_indices=[2,5,8,11])
+        return primus
+
+
+class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Trainer):
+    """
+    3D nnUNet trainer using weight-inflated MedDINOv3 ViT-B/16 backbone.
+
+    The patch embedding is inflated from Conv2d to Conv3d using average inflation
+    (TransSeg, arXiv:2302.04303). All other ViT weights are loaded unchanged.
+
+    Required env vars:
+      MEDDINOV3_3D_CHECKPOINT  Path to the inflated checkpoint produced by inflate_weights_3d.py
+      MEDDINOV3_D_PATCH        Depth patch size used when inflating (must match the checkpoint).
+                               Default: 2.  Must be a power of 2 and divide patch_size[0].
+
+    Token count note: total tokens = (patch_size[0]/d_patch) * (patch_size[1]/16) * (patch_size[2]/16).
+    With nnUNet 3d_fullres patches this can be large.  d_patch=2 on a 32×192×160 patch gives
+    16×12×10 = 1920 tokens; increase d_patch to reduce memory if needed.
+
+    Workflow:
+        python inflate_weights_3d.py --d_patch 2 --out meddinov3_inflated_d2.pth
+        export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_d2.pth
+        export MEDDINOV3_D_PATCH=2
+        nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_primus_multiscale_Trainer
+    """
+
+    @staticmethod
+    def build_network_architecture(
+        patch_size: tuple,
+        architecture_class_name: str,
+        arch_init_kwargs: dict,
+        arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
+        num_input_channels: int,
+        num_output_channels: int,
+        enable_deep_supervision: bool = True,
+    ) -> nn.Module:
+        import os
+        from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base_3d
+        from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus_Multiscale3D
+
+        assert len(patch_size) == 3, (
+            "meddinov3_3d_primus_multiscale_Trainer requires a 3D patch_size "
+            f"(got {patch_size}). Use a 3d_fullres or 3d_lowres nnUNet configuration."
+        )
+
+        d_patch = int(os.environ.get("MEDDINOV3_D_PATCH", "2"))
+        assert patch_size[0] % d_patch == 0, (
+            f"patch_size[0]={patch_size[0]} is not divisible by d_patch={d_patch}. "
+            "Adjust MEDDINOV3_D_PATCH or the nnUNet 3D configuration."
+        )
+
+        # Load inflated checkpoint.
+        ckpt_path = os.environ.get("MEDDINOV3_3D_CHECKPOINT", None)
+        if ckpt_path is None or not os.path.isfile(ckpt_path):
+            raise FileNotFoundError(
+                "No inflated 3D checkpoint found. "
+                "Run inflate_weights_3d.py first and set MEDDINOV3_3D_CHECKPOINT, e.g.:\n"
+                "  python inflate_weights_3d.py --d_patch 2 --out meddinov3_inflated_d2.pth\n"
+                "  export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_d2.pth\n"
+                "  export MEDDINOV3_D_PATCH=2"
+            )
+
+        chkpt = torch.load(ckpt_path, map_location="cpu")
+        if "teacher" in chkpt:
+            state_dict = chkpt["teacher"]
+            state_dict = {
+                k.replace("backbone.", ""): v
+                for k, v in state_dict.items()
+                if "ibot" not in k and "dino_head" not in k
+            }
+        else:
+            state_dict = chkpt
+
+        # Verify the checkpoint's patch_embed weight matches d_patch before building the model.
+        ckpt_weight = state_dict.get("patch_embed.proj.weight")
+        if ckpt_weight is None:
+            raise KeyError("'patch_embed.proj.weight' not found in checkpoint.")
+        if ckpt_weight.dim() != 5:
+            raise ValueError(
+                f"Checkpoint patch_embed.proj.weight has {ckpt_weight.dim()} dims "
+                f"(shape {tuple(ckpt_weight.shape)}); expected 5D (inflated 3D weight). "
+                "Did you forget to run inflate_weights_3d.py?"
+            )
+        ckpt_d_patch = ckpt_weight.shape[2]
+        if ckpt_d_patch != d_patch:
+            raise ValueError(
+                f"Checkpoint was inflated with d_patch={ckpt_d_patch} but "
+                f"MEDDINOV3_D_PATCH={d_patch}. Re-run inflate_weights_3d.py with "
+                f"--d_patch {d_patch} or set MEDDINOV3_D_PATCH={ckpt_d_patch}."
+            )
+
+        # Build 3D ViT and load weights.
+        model = vit_base_3d(
+            patch_size=16,
+            d_patch=d_patch,
+            drop_path_rate=0.2,
+            layerscale_init=1.0e-05,
+            n_storage_tokens=4,
+            qkv_bias=False,
+            mask_k_bias=True,
+        )
+
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        # depth_pos_embed.weight is new — expected in missing, not in checkpoint.
+        expected_missing = {"depth_pos_embed.weight"}
+        truly_missing = [k for k in missing if k not in expected_missing]
+        assert not unexpected, f"Unexpected keys when loading 3D checkpoint: {unexpected}"
+        assert not truly_missing, f"Missing keys when loading 3D checkpoint: {truly_missing}"
+
+        n_tokens = (patch_size[0] // d_patch) * (patch_size[1] // 16) * (patch_size[2] // 16)
+        print(f"[meddinov3_3d] d_patch={d_patch}, patch_size={patch_size}, tokens={n_tokens}")
+
+        primus = Primus_Multiscale3D(
+            embed_dim=768,
+            patch_embed_size=16,
+            d_patch=d_patch,
+            num_classes=num_output_channels,
+            dino_encoder=model,
+            interaction_indices=[2, 5, 8, 11],
+        )
         return primus
 
 
