@@ -76,7 +76,7 @@ export MEDDINOV3_D_PATCH="${D_PATCH}"
 
 IN_DIR="${nnUNet_raw}/${DATASET_NAME}/imagesTs"
 PRED_BASE="${nnUNet_results}/${DATASET_NAME}/predictions"
-CKPT_DIR="${nnUNet_results}/${DATASET_NAME}/.checkpoints/$(basename "${BASH_SOURCE[0]}" .sh)"
+CKPT_DIR="${nnUNet_results}/${DATASET_NAME}/.checkpoints/CHD_Dataset020_MedDINO"
 START_TS=$(date +%s)
 
 # ─────────────────────────────────────────────
@@ -151,19 +151,6 @@ print_footer() {
 # START
 # ─────────────────────────────────────────────
 print_banner
-
-# ─────────────────────────────────────────────
-# Phase 0 — Install MedDINOv3 nnUNet
-# ─────────────────────────────────────────────
-if is_shared_done "install_meddinov3"; then
-    echo "[SKIP] Phase 0: MedDINOv3 nnUNet already installed"
-else
-    echo "================================================================"
-    echo "Phase 0: Installing MedDINOv3 nnUNet"
-    echo "================================================================"
-    pip install -e "${REPO}/nnUNet" --quiet
-    mark_shared_done "install_meddinov3"
-fi
 
 # ─────────────────────────────────────────────
 # Phase 1 — Download 2D checkpoint (shared)
