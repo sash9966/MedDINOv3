@@ -1582,15 +1582,23 @@ class meddinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
                                    num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> nn.Module:
     
+        import os
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base
-        # Initialize MedDINOv3 model.
-        model = vit_base(drop_path_rate=0.2, layerscale_init=1.0e-05, n_storage_tokens=4, 
-                         qkv_bias = False, mask_k_bias= True)
-        # Load checkpoint (remember to download our checkpoint)
-        chkpt = torch.load(
-            '/scr2/yl_li/dinov3/public_release/ct_model_vitb_batch_512_adapt_high_res/model.pth',
-            map_location='cpu'
-        )
+
+        model = vit_base(drop_path_rate=0.2, layerscale_init=1.0e-05, n_storage_tokens=4,
+                         qkv_bias=False, mask_k_bias=True)
+
+        ckpt_path = os.environ.get("MEDDINOV3_2D_CHECKPOINT", None)
+        if ckpt_path is None or not os.path.isfile(ckpt_path):
+            raise FileNotFoundError(
+                "MedDINOv3 2D checkpoint not found. "
+                "Download it from HuggingFace and set MEDDINOV3_2D_CHECKPOINT:\n"
+                "  python -c \"from huggingface_hub import hf_hub_download; "
+                "print(hf_hub_download('ricklisz123/MedDINOv3-ViTB-16-CT-3M', 'model.pth'))\"\n"
+                "  export MEDDINOV3_2D_CHECKPOINT=/path/to/model.pth"
+            )
+
+        chkpt = torch.load(ckpt_path, map_location='cpu')
         state_dict = chkpt['teacher']
         state_dict = {
             k.replace('backbone.', ''): v
@@ -1601,7 +1609,7 @@ class meddinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
 
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus_Multiscale
         primus = Primus_Multiscale(embed_dim=768, patch_embed_size=16, num_classes=num_output_channels,
-                                   dino_encoder=model, interaction_indices=[2,5,8,11])
+                                   dino_encoder=model, interaction_indices=[2, 5, 8, 11])
         return primus
 
 
