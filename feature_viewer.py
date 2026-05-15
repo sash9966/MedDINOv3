@@ -113,16 +113,6 @@ def extract_features(
     """
     from models.vision_transformer import vit_base_3d
 
-    model = vit_base_3d(
-        patch_size=16,
-        d_patch=d_patch,
-        drop_path_rate=0.0,
-        layerscale_init=1e-5,
-        n_storage_tokens=4,
-        qkv_bias=False,
-        mask_k_bias=True,
-    )
-
     ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
     # Handle both formats: flat state dict (our inflated ckpt) or teacher-wrapped
@@ -135,6 +125,22 @@ def extract_features(
     else:
         sd = ckpt
 
+    # Auto-detect in_chans from the checkpoint's patch embedding weight.
+    # MedDINOv3 was pretrained with 3 channels (multi-window CT); nnUNet
+    # datasets are typically 1-channel, so we detect and handle both.
+    in_chans = sd['patch_embed.proj.weight'].shape[1]  # (out, in, d, h, w)
+
+    model = vit_base_3d(
+        patch_size=16,
+        d_patch=d_patch,
+        in_chans=in_chans,
+        drop_path_rate=0.0,
+        layerscale_init=1e-5,
+        n_storage_tokens=4,
+        qkv_bias=False,
+        mask_k_bias=True,
+    )
+
     missing, unexpected = model.load_state_dict(sd, strict=False)
     non_depth = [k for k in missing if 'depth_pos_embed' not in k]
     if non_depth:
@@ -144,6 +150,9 @@ def extract_features(
 
     D, H, W = volume.shape
     x = torch.from_numpy(volume).unsqueeze(0).unsqueeze(0).to(device)  # (1,1,D,H,W)
+    if in_chans > 1:
+        # Expand grayscale to match pretrained channel count by repeating
+        x = x.expand(-1, in_chans, -1, -1, -1).contiguous()
 
     feats_list = model.get_intermediate_layers(x, n=[layer], reshape=True)
     feats = feats_list[0].squeeze(0)          # (embed_dim, Dp, Hp, Wp)

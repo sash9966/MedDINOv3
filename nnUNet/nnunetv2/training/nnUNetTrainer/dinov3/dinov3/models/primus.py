@@ -238,8 +238,11 @@ class Primus_Multiscale3D(AbstractDynamicNetworkArchitectures):
         self.interaction_indices = interaction_indices
 
     def forward(self, x, ret_mask=False):
-        # x: (B, 1, D, H, W)
-        assert x.shape[1] == 1
+        # x: (B, C_in, D, H, W) — C_in is typically 1 from nnUNet.
+        # The pretrained encoder may expect more channels (e.g. 3); expand if needed.
+        enc_chans = self.dino_encoder.patch_embed.proj.weight.shape[1]
+        if x.shape[1] != enc_chans:
+            x = x.expand(-1, enc_chans, -1, -1, -1).contiguous()
         hier = self.dino_encoder.get_intermediate_layers(
             x, n=self.interaction_indices, reshape=True
         )  # list of (B, embed_dim, D', H', W')

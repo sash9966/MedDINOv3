@@ -1706,10 +1706,15 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
                 f"--d_patch {d_patch} or set MEDDINOV3_D_PATCH={ckpt_d_patch}."
             )
 
+        # Auto-detect in_chans from checkpoint (pretrained on 3-channel multi-window CT).
+        # nnUNet CT datasets are 1-channel; Primus_Multiscale3D repeats the channel if needed.
+        in_chans = ckpt_weight.shape[1]
+
         # Build 3D ViT and load weights.
         model = vit_base_3d(
             patch_size=16,
             d_patch=d_patch,
+            in_chans=in_chans,
             drop_path_rate=0.2,
             layerscale_init=1.0e-05,
             n_storage_tokens=4,
