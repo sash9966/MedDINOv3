@@ -45,6 +45,8 @@ source /oak/stanford/groups/amarsden/sastocke/miniconda/etc/profile.d/conda.sh
 conda activate /scratch/users/sastocke/conda_envs/nnunet310
 hash -r
 
+export PYTHONPATH="/scratch/users/sastocke/MedDINOv3/nnUNet:${PYTHONPATH:-}"
+
 export nnUNet_raw="/scratch/users/sastocke/nnunet_CHD/nnUNet_raw"
 export nnUNet_preprocessed="/scratch/users/sastocke/nnunet_CHD/nnUNet_preprocessed"
 export nnUNet_results="/scratch/users/sastocke/nnunet_CHD/nnUNet_results"
