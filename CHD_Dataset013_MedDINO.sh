@@ -100,7 +100,7 @@ print_banner() {
     printf "║  %-66s ║\n" "Dataset      : ${DATASET_NAME}  (ID=${DATASET_ID})"
     printf "║  %-66s ║\n" "Configs      : ${CONFIG_2D}  |  ${CONFIG_3D}"
     printf "║  %-66s ║\n" "Folds        : 0 1 2 3 4  (5-fold ensemble)"
-    printf "║  %-66s ║\n" "Epochs       : 1000"
+    printf "║  %-66s ║\n" "Epochs       : 2D=100  3D=200"
     printf "║  %-66s ║\n" "d_patch      : ${D_PATCH}  (3D depth tokenisation)"
     printf "║  %-66s ║\n" ""
     printf "║  %-66s ║\n" "Exp 1 — 2D   : ${TRAINER_2D}"

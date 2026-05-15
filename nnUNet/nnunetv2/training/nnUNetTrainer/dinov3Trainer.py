@@ -1569,7 +1569,7 @@ class meddinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
         self.num_iterations_per_epoch = 250
         self.num_val_iterations_per_epoch = 50
         self.warmup_epochs = 0
-        self.num_epochs = 1000
+        self.num_epochs = 100
         self.current_epoch = 0
         self.enable_deep_supervision = False
 
@@ -1635,6 +1635,11 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         export MEDDINOV3_D_PATCH=2
         nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_primus_multiscale_Trainer
     """
+
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.num_epochs = 200
 
     @staticmethod
     def build_network_architecture(
