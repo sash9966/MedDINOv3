@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedDINOv3 — Project Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3e;
+    --accent: #7c6af7; --accent2: #4fc3f7; --accent3: #81c784;
+    --warn: #ffb74d; --danger: #ef5350;
+    --text: #e8eaf0; --muted: #8890a4;
+    --code-bg: #12141e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 1.6; }
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  h3 { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+
+  header { padding: 24px 28px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 20px; font-weight: 700; }
+  header .badge { font-size: 11px; background: var(--accent); color: #fff; border-radius: 4px; padding: 2px 8px; }
+  header .sub { color: var(--muted); font-size: 13px; margin-left: auto; }
+
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 0; min-height: calc(100vh - 61px); }
+  nav { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 12px; position: sticky; top: 0; height: calc(100vh - 61px); overflow-y: auto; }
+  nav a { display: block; padding: 6px 10px; border-radius: 6px; color: var(--muted); font-size: 13px; transition: all .15s; }
+  nav a:hover, nav a.active { background: var(--border); color: var(--text); text-decoration: none; }
+  nav .sep { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); padding: 12px 10px 4px; opacity: .6; }
+
+  main { padding: 24px 28px; overflow-y: auto; }
+  section { margin-bottom: 36px; scroll-margin-top: 20px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; background: var(--surface); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+  .tag.green  { background: #1b4332; color: var(--accent3); }
+  .tag.blue   { background: #0d2d45; color: var(--accent2); }
+  .tag.purple { background: #231b45; color: var(--accent); }
+  .tag.amber  { background: #3d2b00; color: var(--warn); }
+  .tag.red    { background: #3b1212; color: var(--danger); }
+  .tag.gray   { background: var(--border); color: var(--muted); }
+
+  code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; color: var(--accent2); }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; line-height: 1.7; color: #cdd; margin-bottom: 10px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  /* arch diagram */
+  .arch { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; font-family: monospace; font-size: 12px; line-height: 1.9; white-space: pre; overflow-x: auto; }
+
+  /* todo */
+  .todo-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .todo-item:last-child { border-bottom: none; }
+  .todo-item input[type=checkbox] { margin-top: 3px; accent-color: var(--accent); width: 15px; height: 15px; flex-shrink: 0; }
+  .todo-item label { cursor: pointer; flex: 1; }
+  .todo-item.done label { text-decoration: line-through; color: var(--muted); }
+  .new-todo { display: flex; gap: 8px; margin-top: 12px; }
+  .new-todo input { flex: 1; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px; }
+  .new-todo select { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; color: var(--text); font-size: 13px; }
+  .new-todo button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+
+  /* bugs */
+  .bug-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .bug-item:last-child { border-bottom: none; }
+  .bug-item .bug-text { flex: 1; font-size: 13px; }
+  .bug-item .bug-date { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .new-bug { display: flex; gap: 8px; margin-top: 12px; }
+  .new-bug input { flex: 1; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px; }
+  .new-bug button { background: var(--danger); color: #fff; border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+
+  details summary { cursor: pointer; padding: 6px 0; font-weight: 600; list-style: none; }
+  details summary::before { content: '▶  '; font-size: 10px; }
+  details[open] summary::before { content: '▼  '; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>MedDINOv3</h1>
+  <span class="badge">CHD Segmentation</span>
+  <span class="sub">Stanford · Akshay Lab · <span id="dateHdr"></span></span>
+</header>
+
+<div class="layout">
+<nav id="sidebar">
+  <div class="sep">Sections</div>
+  <a href="#data">Data</a>
+  <a href="#arch">Architecture</a>
+  <a href="#inflation">Inflation Strategies</a>
+  <a href="#viewers">Feature Viewers</a>
+  <a href="#experiments">Experiments</a>
+  <a href="#papers">Papers</a>
+  <a href="#repos">Repos</a>
+  <a href="#todos">To-Do</a>
+  <a href="#bugs">Bug Tracker</a>
+</nav>
+
+<main>
+
+<!-- ═══════════════ DATA ═══════════════ -->
+<section id="data">
+<h2>Data</h2>
+<div class="card">
+<table>
+  <thead><tr><th>Dataset ID</th><th>Name</th><th>Modality</th><th>Notes</th><th>SLURM Scripts</th></tr></thead>
+  <tbody>
+    <tr><td><code>001</code></td><td>Dataset001_all_imageCHD</td><td><span class="tag blue">CECT</span></td><td>Full imageCHD dataset, all labels</td><td><code>CHD_Dataset001_MedDINO.sh</code> · <code>…_Ashwin.sh</code></td></tr>
+    <tr><td><code>013</code></td><td>Dataset013_Fanweidatacleaned</td><td><span class="tag blue">CECT</span></td><td>Fanwei cleaned subset</td><td><code>CHD_Dataset013_MedDINO.sh</code> · <code>…_Ashwin.sh</code></td></tr>
+    <tr><td><code>020</code></td><td>Dataset020FanweiDataandImageCHD_HU</td><td><span class="tag blue">CECT</span></td><td>Combined Fanwei + imageCHD, HU-normalised</td><td><code>CHD_Dataset020_MedDINO.sh</code> · <code>…_Ashwin.sh</code></td></tr>
+    <tr><td><code>030</code></td><td>Dataset030_imageCHD_HU</td><td><span class="tag blue">CECT</span></td><td>imageCHD only, HU-normalised</td><td><code>CHD_Dataset030_MedDINO.sh</code> · <code>…_Ashwin.sh</code></td></tr>
+  </tbody>
+</table>
+</div>
+<div class="card">
+<h3>Domain notes</h3>
+<p style="color:var(--muted);font-size:13px;margin-top:4px">
+  ECG-gated contrast-enhanced CT. Blood pool ~200–600 HU vs NCCT ~40–60 HU (MedDINOv3 pretraining domain).
+  Viewer clip recommended: <code>--clip -1000 1000</code> for CECT. nnUNet training uses HU-normalised inputs.
+</p>
+</div>
+</section>
+
+<!-- ═══════════════ ARCHITECTURE ═══════════════ -->
+<section id="arch">
+<h2>Architecture</h2>
+<div class="grid2">
+  <div class="card">
+    <h3>Backbone — MedDINOv3 ViT-B/16</h3>
+    <table style="margin-top:8px">
+      <tr><td style="color:var(--muted)">embed_dim</td><td>768</td></tr>
+      <tr><td style="color:var(--muted)">depth</td><td>12</td></tr>
+      <tr><td style="color:var(--muted)">in_chans</td><td>3 (multi-window CT)</td></tr>
+      <tr><td style="color:var(--muted)">patch_size</td><td>16×16 (2D) / 2×16×16 (3D)</td></tr>
+      <tr><td style="color:var(--muted)">n_storage_tokens</td><td>4</td></tr>
+      <tr><td style="color:var(--muted)">qkv_bias</td><td>False</td></tr>
+      <tr><td style="color:var(--muted)">mask_k_bias</td><td>True</td></tr>
+      <tr><td style="color:var(--muted)">pos_encoding</td><td>RoPE (no learnable pos_embed)</td></tr>
+      <tr><td style="color:var(--muted)">depth_pos_embed</td><td>nn.Embedding — zero-init at load</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Decoder — Primus_Multiscale(3D)</h3>
+    <table style="margin-top:8px">
+      <tr><td style="color:var(--muted)">interaction_indices</td><td>[2, 5, 8, 11]</td></tr>
+      <tr><td style="color:var(--muted)">cat channels</td><td>768 × 4 = 3072</td></tr>
+      <tr><td style="color:var(--muted)">PatchDecode3D stages</td><td>log2(d_patch) × (2,2,2) + remaining × (1,2,2)</td></tr>
+      <tr><td style="color:var(--muted)">output</td><td>(B, num_classes, D, H, W)</td></tr>
+    </table>
+  </div>
+</div>
+<div class="arch">
+Input (B, 1, D, H, W)
+       │  repeat to 3ch
+       ▼
+  PatchEmbed3D  Conv3d(3, 768, kernel=(d,16,16))
+       │
+       ▼
+  DinoVisionTransformer3D   ← 12 transformer blocks
+       │   + depth_pos_embed (zero-init)
+       │   + RoPE (tiled 2D→3D)
+       │
+  [layers 2, 5, 8, 11]  ←  4 × (B, 768, D', H', W')
+       │
+       cat → (B, 3072, D', H', W')
+       │
+  PatchDecode3D  (ConvTranspose3d upsample)
+       │
+       ▼
+  Output  (B, num_classes, D, H, W)
+</div>
+</section>
+
+<!-- ═══════════════ INFLATION STRATEGIES ═══════════════ -->
+<section id="inflation">
+<h2>Inflation Strategies</h2>
+<div class="card">
+<p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+  All strategies inflate <code>patch_embed.proj.weight</code> from <code>(768, 3, 16, 16)</code> → <code>(768, 3, d_patch, 16, 16)</code>.
+  All other ViT weights are copied unchanged.
+</p>
+<table>
+  <thead><tr><th>Strategy</th><th>Script</th><th>Checkpoint name</th><th>Trainer class</th><th>Channel treatment</th><th>Depth normalisation</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="tag amber">average</span></td>
+      <td><code>inflate_weights_3d.py --inflation average</code></td>
+      <td><code>meddinov3_inflated_average_d2.pth</code></td>
+      <td><code>meddinov3_3d_primus_multiscale_Trainer</code></td>
+      <td>Each channel preserved independently</td>
+      <td>÷ d_patch</td>
+    </tr>
+    <tr>
+      <td><span class="tag purple">centering</span> <span class="tag gray">default</span></td>
+      <td><code>inflate_weights_3d.py --inflation centering</code></td>
+      <td><code>meddinov3_inflated_center_d2.pth</code></td>
+      <td><code>meddinov3_3d_primus_multiscale_Trainer</code></td>
+      <td>Each channel preserved; center slice = full weight, rest zero</td>
+      <td>none (sparse)</td>
+    </tr>
+    <tr>
+      <td><span class="tag blue">Ashwin_3d_inflation</span></td>
+      <td><code>inflate_weights_3d_ashwin.py</code></td>
+      <td><code>meddinov3_inflated_ashwin_d2.pth</code></td>
+      <td><code>meddinov3_3d_ashwin_primus_multiscale_Trainer</code></td>
+      <td>3 channels summed → redistributed equally (channel-average init)</td>
+      <td>none (d_patch copies of equal weight)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<div class="card">
+  <h3>3D training interventions (all 3D trainers)</h3>
+  <table style="margin-top:8px">
+    <tr><td style="color:var(--muted);width:220px">zero-init depth_pos_embed</td><td>Prevents random spatial noise corrupting pretrained 2D features on step 0</td></tr>
+    <tr><td style="color:var(--muted)">Differential LRs</td><td>decoder = initial_lr · 1.0 · depth_pos_embed = ×0.5 · backbone = ×0.05 (env: <code>MEDDINOV3_BACKBONE_LR_SCALE</code>)</td></tr>
+    <tr><td style="color:var(--muted)">Per-group PolyLR</td><td>Each param group decays from its own initial_lr, not a shared value</td></tr>
+  </table>
+</div>
+</section>
+
+<!-- ═══════════════ FEATURE VIEWERS ═══════════════ -->
+<section id="viewers">
+<h2>Feature Viewers</h2>
+<div class="grid2">
+  <div class="card">
+    <h3>2D Viewer <code>feature_viewer_2d.py</code></h3>
+    <p style="color:var(--muted);font-size:13px;margin:6px 0 10px">Per-slice 2D ViT features, PCA/similarity colourmap.</p>
+    <pre>python feature_viewer_2d.py \
+--nifti scan.nii.gz \
+--checkpoint meddinov3_2d.pth \
+--clip -1000 1000</pre>
+    <p style="color:var(--muted);font-size:12px">Accepts 2D <b>or</b> any inflated 3D checkpoint (auto-deflates by averaging depth dim).</p>
+  </div>
+  <div class="card">
+    <h3>3D Viewer <code>feature_viewer_3d.py</code></h3>
+    <p style="color:var(--muted);font-size:13px;margin:6px 0 10px">Axial/coronal/sagittal crosshair + similarity probe. Scroll, slider, keyboard (↑↓ PgUp/Dn) navigate axial slices.</p>
+    <pre>python feature_viewer_3d.py \
+--nifti scan.nii.gz \
+--checkpoint meddinov3_2d.pth \
+--clip -1000 1000</pre>
+    <p style="color:var(--muted);font-size:12px">Same checkpoint flags for all inflation variants — auto-deflation handles 5D patch_embed weights identically.</p>
+  </div>
+</div>
+<div class="card">
+  <h3>Checkpoint compatibility</h3>
+  <table>
+    <thead><tr><th>Checkpoint</th><th>2D viewer</th><th>3D viewer</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>meddinov3_2d.pth</code></td><td><span class="tag green">✓ direct</span></td><td><span class="tag green">✓ direct</span></td><td>4D patch_embed weight, no deflation needed</td></tr>
+      <tr><td><code>meddinov3_inflated_center_d2.pth</code></td><td><span class="tag amber">✓ auto-deflate</span></td><td><span class="tag amber">✓ auto-deflate</span></td><td>mean(dim=2) recovers 2D weight for per-slice extraction</td></tr>
+      <tr><td><code>meddinov3_inflated_ashwin_d2.pth</code></td><td><span class="tag amber">✓ auto-deflate</span></td><td><span class="tag amber">✓ auto-deflate</span></td><td>Same — Ashwin slices are uniform so mean = any slice</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<!-- ═══════════════ EXPERIMENTS ═══════════════ -->
+<section id="experiments">
+<h2>Experiments</h2>
+<div id="exp-table-container">
+<table id="expTable">
+  <thead>
+    <tr>
+      <th>Tag</th><th>Dataset</th><th>Config</th><th>Trainer</th><th>Inflation</th><th>Status</th><th>Notes</th>
+    </tr>
+  </thead>
+  <tbody id="expBody"></tbody>
+</table>
+</div>
+<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+  <input id="expTag" placeholder="Tag" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:100px">
+  <input id="expDataset" placeholder="Dataset (001…)" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:100px">
+  <input id="expConfig" placeholder="2d / 3d_fullres" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:110px">
+  <input id="expTrainer" placeholder="Trainer" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:200px">
+  <input id="expInflation" placeholder="Inflation" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:100px">
+  <select id="expStatus" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:13px">
+    <option>queued</option><option>running</option><option>done</option><option>failed</option>
+  </select>
+  <input id="expNotes" placeholder="Notes / Dice" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:200px">
+  <button onclick="addExp()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px">Add row</button>
+</div>
+</section>
+
+<!-- ═══════════════ PAPERS ═══════════════ -->
+<section id="papers">
+<h2>Papers</h2>
+<table>
+  <thead><tr><th>Title</th><th>Link</th><th>Relevance</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>MedDINOv3 — Self-supervised ViT pretraining on 3M CT slices</td>
+      <td><a href="https://huggingface.co/ricklisz123/MedDINOv3-ViTB-16-CT-3M">HuggingFace</a></td>
+      <td>Backbone. ViT-B/16, pretrained on NCCT, 3 multi-window input channels.</td>
+    </tr>
+    <tr>
+      <td>TransSeg — 3D weight inflation (arXiv:2302.04303)</td>
+      <td><a href="https://arxiv.org/abs/2302.04303">arXiv</a></td>
+      <td>Average inflation methodology: w_3d = w_2d.unsqueeze(2).repeat / d_patch</td>
+    </tr>
+    <tr>
+      <td>DINOv2 — Self-supervised vision transformers (arXiv:2304.07193)</td>
+      <td><a href="https://arxiv.org/abs/2304.07193">arXiv</a></td>
+      <td>MedDINOv3 foundation; RoPE, storage tokens, iBot training objective.</td>
+    </tr>
+    <tr>
+      <td>nnUNet — Self-configuring medical image segmentation</td>
+      <td><a href="https://github.com/MIC-DKFZ/nnUNet">GitHub</a></td>
+      <td>Training pipeline. Used for both 2d and 3d_fullres configurations.</td>
+    </tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ═══════════════ REPOS ═══════════════ -->
+<section id="repos">
+<h2>Repos</h2>
+<table>
+  <thead><tr><th>Repo</th><th>Branch</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><a href="https://github.com/sash9966/MedDINOv3">sash9966/MedDINOv3</a> <span class="tag green">fork</span></td>
+      <td><code>main</code></td>
+      <td>Working fork — all CHD modifications, inflation scripts, trainers, viewers</td>
+    </tr>
+    <tr>
+      <td><a href="https://github.com/ricklisz/MedDINOv3">ricklisz/MedDINOv3</a></td>
+      <td><code>main</code></td>
+      <td>Upstream MedDINOv3 repo (read-only for Sascha)</td>
+    </tr>
+    <tr>
+      <td><a href="https://github.com/MIC-DKFZ/nnUNet">MIC-DKFZ/nnUNet</a></td>
+      <td>—</td>
+      <td>Bundled as <code>nnUNet/</code> subdir; patched with custom trainers</td>
+    </tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ═══════════════ TODOS ═══════════════ -->
+<section id="todos">
+<h2>To-Do</h2>
+<div class="card" id="todoList"></div>
+<div class="new-todo">
+  <input id="todoInput" placeholder="Add task..." onkeydown="if(event.key==='Enter')addTodo()">
+  <select id="todoPri">
+    <option value="high">🔴 high</option>
+    <option value="med" selected>🟡 med</option>
+    <option value="low">🟢 low</option>
+  </select>
+  <button onclick="addTodo()">Add</button>
+</div>
+</section>
+
+<!-- ═══════════════ BUGS ═══════════════ -->
+<section id="bugs">
+<h2>Bug Tracker</h2>
+<div class="card" id="bugList"></div>
+<div class="new-bug">
+  <input id="bugInput" placeholder="Describe bug..." onkeydown="if(event.key==='Enter')addBug()">
+  <select id="bugStat" style="background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:7px 8px;color:var(--text);font-size:13px">
+    <option value="open">open</option><option value="resolved">resolved</option>
+  </select>
+  <button onclick="addBug()">Log Bug</button>
+</div>
+</section>
+
+</main>
+</div>
+
+<script>
+// ── date header ──
+document.getElementById('dateHdr').textContent = new Date().toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
+
+// ── nav highlight ──
+const navLinks = document.querySelectorAll('nav a');
+const sections = document.querySelectorAll('section');
+function highlightNav(){
+  let cur='';
+  sections.forEach(s=>{ if(s.getBoundingClientRect().top<80) cur=s.id; });
+  navLinks.forEach(a=>{ a.classList.toggle('active', a.getAttribute('href')==='#'+cur); });
+}
+document.querySelector('main').addEventListener('scroll', highlightNav);
+
+// ═══ EXPERIMENTS (localStorage) ═══
+const EXP_KEY='meddino_experiments';
+const STATUS_TAG={queued:'gray',running:'amber',done:'green',failed:'red'};
+const STATUS_ICON={queued:'○',running:'◎',done:'✓',failed:'✗'};
+let experiments = JSON.parse(localStorage.getItem(EXP_KEY)||'null') || [
+  {tag:'baseline-2d', dataset:'001', config:'2d', trainer:'meddinov3_base_primus_multiscale_Trainer', inflation:'—', status:'queued', notes:''},
+  {tag:'3d-centering', dataset:'001', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering', status:'queued', notes:''},
+  {tag:'3d-ashwin', dataset:'001', config:'3d_fullres', trainer:'meddinov3_3d_ashwin_primus_multiscale_Trainer', inflation:'Ashwin_3d_inflation', status:'queued', notes:''},
+];
+
+function saveExp(){ localStorage.setItem(EXP_KEY, JSON.stringify(experiments)); }
+function renderExp(){
+  const tb=document.getElementById('expBody');
+  tb.innerHTML='';
+  experiments.forEach((e,i)=>{
+    const tr=document.createElement('tr');
+    const sc=STATUS_TAG[e.status]||'gray';
+    tr.innerHTML=`
+      <td><code>${e.tag}</code></td>
+      <td>${e.dataset}</td>
+      <td>${e.config}</td>
+      <td style="font-size:12px">${e.trainer}</td>
+      <td>${e.inflation}</td>
+      <td><span class="tag ${sc}">${STATUS_ICON[e.status]||'?'} ${e.status}</span></td>
+      <td contenteditable="true" style="font-size:12px;color:var(--muted)" onblur="experiments[${i}].notes=this.textContent;saveExp()">${e.notes}</td>
+    `;
+    // click status to cycle
+    tr.querySelector('.tag').style.cursor='pointer';
+    tr.querySelector('.tag').addEventListener('click',()=>{
+      const order=['queued','running','done','failed'];
+      e.status=order[(order.indexOf(e.status)+1)%order.length];
+      saveExp(); renderExp();
+    });
+    tb.appendChild(tr);
+  });
+}
+function addExp(){
+  const tag=document.getElementById('expTag').value.trim();
+  if(!tag) return;
+  experiments.push({
+    tag, dataset:document.getElementById('expDataset').value.trim(),
+    config:document.getElementById('expConfig').value.trim(),
+    trainer:document.getElementById('expTrainer').value.trim(),
+    inflation:document.getElementById('expInflation').value.trim(),
+    status:document.getElementById('expStatus').value,
+    notes:document.getElementById('expNotes').value.trim()
+  });
+  saveExp(); renderExp();
+  ['expTag','expDataset','expConfig','expTrainer','expInflation','expNotes'].forEach(id=>document.getElementById(id).value='');
+}
+renderExp();
+
+// ═══ TODOS ═══
+const TODO_KEY='meddino_todos';
+let todos=JSON.parse(localStorage.getItem(TODO_KEY)||'null')||[
+  {text:'Verify Ashwin-inflated checkpoint loads cleanly on Sherlock', done:false, pri:'high'},
+  {text:'Run 3D centering-inflation training D001 fold 0', done:false, pri:'high'},
+  {text:'Run 3D Ashwin-inflation training D001 fold 0', done:false, pri:'high'},
+  {text:'Compare Dice: centering vs Ashwin inflation at 50 epochs', done:false, pri:'med'},
+  {text:'Test anatomy-guided masking for CECT adaptation', done:false, pri:'low'},
+  {text:'Evaluate 2D baseline on D013 + D030', done:false, pri:'med'},
+];
+function saveTodos(){ localStorage.setItem(TODO_KEY, JSON.stringify(todos)); }
+const PRI_TAG={high:'red',med:'amber',low:'green'};
+function renderTodos(){
+  const el=document.getElementById('todoList');
+  el.innerHTML='';
+  todos.forEach((t,i)=>{
+    const div=document.createElement('div');
+    div.className='todo-item'+(t.done?' done':'');
+    div.innerHTML=`<input type="checkbox" ${t.done?'checked':''} onchange="todos[${i}].done=this.checked;saveTodos();renderTodos()">
+      <label onclick="todos[${i}].done=!todos[${i}].done;saveTodos();renderTodos()">
+        <span class="tag ${PRI_TAG[t.pri]||'gray'}" style="margin-right:6px">${t.pri}</span>${t.text}
+      </label>
+      <span style="cursor:pointer;color:var(--muted);font-size:16px" onclick="todos.splice(${i},1);saveTodos();renderTodos()">×</span>`;
+    el.appendChild(div);
+  });
+}
+function addTodo(){
+  const v=document.getElementById('todoInput').value.trim();
+  if(!v) return;
+  todos.unshift({text:v, done:false, pri:document.getElementById('todoPri').value});
+  saveTodos(); renderTodos();
+  document.getElementById('todoInput').value='';
+}
+renderTodos();
+
+// ═══ BUGS ═══
+const BUG_KEY='meddino_bugs';
+let bugs=JSON.parse(localStorage.getItem(BUG_KEY)||'null')||[
+  {text:'macOS trackpad scroll sent fractional steps → fixed with accumulator pattern', status:'resolved', date:'2026-05-16'},
+  {text:'depth_pos_embed random init corrupted 2D pretrained features in viewer (radial gradient artifact)', status:'resolved', date:'2026-05-16'},
+  {text:'Auto-deflation of 3D checkpoint needed for 2D viewer when passed inflated .pth', status:'resolved', date:'2026-05-17'},
+  {text:'PolyLRScheduler overwrote all param groups with same LR (ignored initial_lr per group)', status:'resolved', date:'2026-05-18'},
+];
+function saveBugs(){ localStorage.setItem(BUG_KEY, JSON.stringify(bugs)); }
+function renderBugs(){
+  const el=document.getElementById('bugList');
+  el.innerHTML='';
+  bugs.forEach((b,i)=>{
+    const div=document.createElement('div');
+    div.className='bug-item';
+    const sc=b.status==='resolved'?'green':'red';
+    div.innerHTML=`<span class="tag ${sc}" style="cursor:pointer;flex-shrink:0" onclick="bugs[${i}].status=bugs[${i}].status==='open'?'resolved':'open';saveBugs();renderBugs()">${b.status}</span>
+      <span class="bug-text">${b.text}</span>
+      <span class="bug-date">${b.date}</span>
+      <span style="cursor:pointer;color:var(--muted);font-size:16px;margin-left:8px" onclick="bugs.splice(${i},1);saveBugs();renderBugs()">×</span>`;
+    el.appendChild(div);
+  });
+}
+function addBug(){
+  const v=document.getElementById('bugInput').value.trim();
+  if(!v) return;
+  bugs.unshift({text:v, status:document.getElementById('bugStat').value, date:new Date().toISOString().slice(0,10)});
+  saveBugs(); renderBugs();
+  document.getElementById('bugInput').value='';
+}
+renderBugs();
+</script>
+</body>
+</html>
