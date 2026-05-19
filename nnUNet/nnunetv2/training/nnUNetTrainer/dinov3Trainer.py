@@ -1790,6 +1790,56 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         return primus
 
 
+class meddinov3_3d_ashwin_primus_multiscale_Trainer(meddinov3_3d_primus_multiscale_Trainer):
+    """
+    Ashwin_3d_inflation variant of the 3D MedDINOv3 trainer.
+
+    Identical to meddinov3_3d_primus_multiscale_Trainer in all respects EXCEPT:
+      - Expects a checkpoint inflated with inflate_weights_3d_ashwin.py
+        (channel-averaging strategy: sum 3 channels -> redistribute -> depth-tile).
+      - Named distinctly so nnUNet writes results under a separate directory, making
+        it straightforward to compare against the centering-inflation baseline.
+
+    Required env vars (same as parent):
+      MEDDINOV3_3D_CHECKPOINT  Path to the Ashwin-inflated checkpoint.
+                               e.g. meddinov3_inflated_ashwin_d2.pth
+      MEDDINOV3_D_PATCH        Depth patch size (default 2).
+      MEDDINOV3_BACKBONE_LR_SCALE  Backbone LR multiplier (default 0.05).
+
+    Recommended workflow:
+        python inflate_weights_3d_ashwin.py --checkpoint meddinov3_2d.pth --d_patch 2 --out meddinov3_inflated_ashwin_d2.pth
+        export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_ashwin_d2.pth
+        export MEDDINOV3_D_PATCH=2
+        nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_ashwin_primus_multiscale_Trainer
+    """
+
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        print("[Ashwin_3d_inflation] Using Ashwin channel-averaging inflation strategy")
+
+    @staticmethod
+    def build_network_architecture(
+        patch_size: tuple,
+        architecture_class_name: str,
+        arch_init_kwargs: dict,
+        arch_init_kwargs_req_import,
+        num_input_channels: int,
+        num_output_channels: int,
+        enable_deep_supervision: bool = True,
+    ) -> nn.Module:
+        print("[Ashwin_3d_inflation] Building network with Ashwin-inflated checkpoint")
+        return meddinov3_3d_primus_multiscale_Trainer.build_network_architecture(
+            patch_size=patch_size,
+            architecture_class_name=architecture_class_name,
+            arch_init_kwargs=arch_init_kwargs,
+            arch_init_kwargs_req_import=arch_init_kwargs_req_import,
+            num_input_channels=num_input_channels,
+            num_output_channels=num_output_channels,
+            enable_deep_supervision=enable_deep_supervision,
+        )
+
+
 def build_dinov3_base():
     from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base
     # Initialize model
