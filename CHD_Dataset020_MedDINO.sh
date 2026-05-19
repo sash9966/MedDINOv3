@@ -69,7 +69,7 @@ D_PATCH=2
 REPO="/scratch/users/sastocke/MedDINOv3"
 SHARED_CKPT_DIR="/scratch/users/sastocke/meddinov3_checkpoints"
 RAW_CKPT="${SHARED_CKPT_DIR}/meddinov3_2d.pth"
-INFLATED_CKPT="${SHARED_CKPT_DIR}/meddinov3_inflated_d${D_PATCH}.pth"
+INFLATED_CKPT="${SHARED_CKPT_DIR}/meddinov3_inflated_center_d${D_PATCH}.pth"
 INFLATE_SCRIPT="${REPO}/nnUNet/nnunetv2/training/nnUNetTrainer/dinov3/inflate_weights_3d.py"
 
 export MEDDINOV3_2D_CHECKPOINT="${RAW_CKPT}"
@@ -177,7 +177,7 @@ fi
 # ─────────────────────────────────────────────
 # Phase 2 — Inflate weights for 3D (shared)
 # ─────────────────────────────────────────────
-if is_shared_done "inflate_d${D_PATCH}"; then
+if is_shared_done "inflate_center_d${D_PATCH}"; then
     echo "[SKIP] Phase 2: inflated checkpoint already exists"
 else
     echo "================================================================"
@@ -186,8 +186,9 @@ else
     python3 "${INFLATE_SCRIPT}" \
         --checkpoint "${RAW_CKPT}" \
         --d_patch "${D_PATCH}" \
+        --inflation centering \
         --out "${INFLATED_CKPT}"
-    mark_shared_done "inflate_d${D_PATCH}"
+    mark_shared_done "inflate_center_d${D_PATCH}"
 fi
 
 # ─────────────────────────────────────────────

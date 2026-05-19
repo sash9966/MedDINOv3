@@ -1617,21 +1617,27 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
     """
     3D nnUNet trainer using weight-inflated MedDINOv3 ViT-B/16 backbone.
 
-    The patch embedding is inflated from Conv2d to Conv3d using average inflation
-    (TransSeg, arXiv:2302.04303). All other ViT weights are loaded unchanged.
+    The patch embedding is inflated from Conv2d to Conv3d. All other ViT weights
+    are loaded unchanged. Three adaptations are applied for CECT CHD data:
+
+      1. depth_pos_embed is zero-initialised (not random) so the model starts in
+         the pretrained 2D feature space and learns depth context from data only.
+
+      2. Differential learning rates: decoder runs at initial_lr, the pretrained
+         backbone runs at initial_lr * BACKBONE_LR_SCALE (default 0.05), and
+         depth_pos_embed runs at initial_lr * 0.5 (newly initialised, needs to learn).
+
+      3. Use centering inflation (--inflation centering) when regenerating the
+         checkpoint for better through-plane context learning.
 
     Required env vars:
-      MEDDINOV3_3D_CHECKPOINT  Path to the inflated checkpoint produced by inflate_weights_3d.py
-      MEDDINOV3_D_PATCH        Depth patch size used when inflating (must match the checkpoint).
-                               Default: 2.  Must be a power of 2 and divide patch_size[0].
+      MEDDINOV3_3D_CHECKPOINT  Path to the inflated checkpoint.
+      MEDDINOV3_D_PATCH        Depth patch size (default 2).
+      MEDDINOV3_BACKBONE_LR_SCALE  Backbone LR multiplier (default 0.05).
 
-    Token count note: total tokens = (patch_size[0]/d_patch) * (patch_size[1]/16) * (patch_size[2]/16).
-    With nnUNet 3d_fullres patches this can be large.  d_patch=2 on a 32×192×160 patch gives
-    16×12×10 = 1920 tokens; increase d_patch to reduce memory if needed.
-
-    Workflow:
-        python inflate_weights_3d.py --d_patch 2 --out meddinov3_inflated_d2.pth
-        export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_d2.pth
+    Recommended workflow:
+        python inflate_weights_3d.py --checkpoint meddinov3_2d.pth --d_patch 2 --inflation centering --out meddinov3_inflated_center_d2.pth
+        export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_center_d2.pth
         export MEDDINOV3_D_PATCH=2
         nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_primus_multiscale_Trainer
     """
@@ -1640,6 +1646,40 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         self.num_epochs = 200
+
+    def configure_optimizers(self):
+        import os
+        backbone_lr_scale = float(os.environ.get("MEDDINOV3_BACKBONE_LR_SCALE", "0.05"))
+        net = self.network
+
+        encoder = net.dino_encoder
+        depth_pe_ids = {id(p) for p in encoder.depth_pos_embed.parameters()}
+        backbone_params = [p for p in encoder.parameters() if id(p) not in depth_pe_ids]
+        depth_pe_params = list(encoder.depth_pos_embed.parameters())
+        decoder_params  = list(net.up_projection.parameters())
+
+        lr = self.initial_lr
+        param_groups = [
+            {'params': decoder_params,  'lr': lr,                   'initial_lr': lr,                   'name': 'decoder'},
+            {'params': depth_pe_params, 'lr': lr * 0.5,             'initial_lr': lr * 0.5,             'name': 'depth_pos_embed'},
+            {'params': backbone_params, 'lr': lr * backbone_lr_scale, 'initial_lr': lr * backbone_lr_scale, 'name': 'backbone'},
+        ]
+        print(f'[meddinov3_3d] LR — decoder={lr:.2e}  depth_pe={lr*0.5:.2e}  backbone={lr*backbone_lr_scale:.2e}')
+
+        optimizer = torch.optim.SGD(param_groups, momentum=0.99, nesterov=True,
+                                    weight_decay=self.weight_decay)
+
+        class _PolyLRPerGroup(PolyLRScheduler):
+            def step(self, current_step=None):
+                if current_step is None or current_step == -1:
+                    current_step = self.ctr
+                    self.ctr += 1
+                scale = (1 - current_step / self.max_steps) ** self.exponent
+                for pg in self.optimizer.param_groups:
+                    pg['lr'] = pg.get('initial_lr', self.initial_lr) * scale
+
+        lr_scheduler = _PolyLRPerGroup(optimizer, lr, self.num_epochs)
+        return optimizer, lr_scheduler
 
     @staticmethod
     def build_network_architecture(
@@ -1728,6 +1768,13 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         truly_missing = [k for k in missing if k not in expected_missing]
         assert not unexpected, f"Unexpected keys when loading 3D checkpoint: {unexpected}"
         assert not truly_missing, f"Missing keys when loading 3D checkpoint: {truly_missing}"
+
+        # Zero-init depth_pos_embed so the model starts in the pretrained 2D feature
+        # space. Random init (trunc_normal std=0.02) adds ~0.5 magnitude noise per token
+        # which partially corrupts pretrained features from the first step.
+        with torch.no_grad():
+            model.depth_pos_embed.weight.zero_()
+        print("[meddinov3_3d] depth_pos_embed zero-initialised")
 
         n_tokens = (patch_size[0] // d_patch) * (patch_size[1] // 16) * (patch_size[2] // 16)
         print(f"[meddinov3_3d] d_patch={d_patch}, patch_size={patch_size}, tokens={n_tokens}")

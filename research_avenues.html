@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedDINOv3 Research Avenues — CHD Feature Learning</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 15px; line-height: 1.7; }
+  a { color: #58a6ff; }
+
+  .page { max-width: 1100px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  h1 { font-size: 26px; color: #e6edf3; margin-bottom: 6px; }
+  h2 { font-size: 19px; color: #e6edf3; margin: 36px 0 12px; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+  h3 { font-size: 15px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; margin: 24px 0 8px; }
+  p  { margin-bottom: 12px; color: #c9d1d9; }
+  ul { padding-left: 20px; margin-bottom: 12px; }
+  li { margin-bottom: 4px; }
+
+  .subtitle { color: #8b949e; font-size: 14px; margin-bottom: 32px; }
+
+  /* status chips */
+  .chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; text-transform: uppercase; letter-spacing: .04em; }
+  .green  { background: #1a3a27; color: #3fb950; border: 1px solid #2ea043; }
+  .yellow { background: #3a2e1a; color: #d29922; border: 1px solid #9e6a03; }
+  .red    { background: #3a1a1a; color: #f85149; border: 1px solid #da3633; }
+  .blue   { background: #1a2a3a; color: #58a6ff; border: 1px solid #1f6feb; }
+
+  /* cards */
+  .avenue-card {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin-bottom: 28px;
+  }
+  .avenue-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .avenue-num {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px; flex-shrink: 0;
+  }
+  .num1 { background: #1f3a5f; color: #58a6ff; }
+  .num2 { background: #1a3a27; color: #3fb950; }
+  .num3 { background: #3a2a1a; color: #d29922; }
+
+  .avenue-title { font-size: 18px; color: #e6edf3; font-weight: 600; }
+  .avenue-subtitle { font-size: 13px; color: #8b949e; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  @media(max-width:680px){ .cols { grid-template-columns: 1fr; } }
+
+  .col-box { background: #0d1117; border-radius: 7px; padding: 14px 16px; border: 1px solid #21262d; }
+  .col-box h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+  .pros h4 { color: #3fb950; }
+  .cons h4 { color: #f85149; }
+  .col-box li { font-size: 13.5px; color: #c9d1d9; }
+
+  .data-box { background: #1c2128; border: 1px solid #30363d; border-radius: 7px; padding: 12px 16px; margin-top: 14px; display: flex; gap: 24px; flex-wrap: wrap; }
+  .data-item { font-size: 13px; }
+  .data-item .label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .data-item .value { color: #e6edf3; font-weight: 600; font-size: 15px; }
+
+  .feasibility-bar { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .feasibility-bar .label { font-size: 12px; color: #8b949e; width: 130px; flex-shrink:0; }
+  .bar-track { flex: 1; height: 6px; background: #21262d; border-radius: 3px; }
+  .bar-fill  { height: 100%; border-radius: 3px; }
+
+  /* comparison table */
+  .cmp-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13.5px; }
+  .cmp-table th { background: #161b22; color: #8b949e; font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 2px solid #21262d; }
+  .cmp-table td { padding: 9px 14px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  .cmp-table tr:last-child td { border-bottom: none; }
+  .cmp-table tr:hover td { background: #1c2128; }
+
+  /* highlight box */
+  .highlight { background: #132032; border: 1px solid #1f6feb; border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+  .highlight .hl-title { color: #58a6ff; font-weight: 700; margin-bottom: 6px; }
+
+  .warning { background: #2a1f0e; border: 1px solid #9e6a03; border-radius: 8px; padding: 14px 18px; margin: 14px 0; }
+  .warning .wt { color: #d29922; font-weight: 700; margin-bottom: 4px; font-size: 13px; }
+
+  .recommend { background: #0f2a1c; border: 1px solid #2ea043; border-radius: 10px; padding: 22px 26px; margin-top: 32px; }
+  .recommend h2 { border-color: #2ea043; }
+  .recommend .phase { display: flex; gap: 12px; margin-bottom: 14px; align-items: flex-start; }
+  .recommend .phase-num { background: #2ea043; color: #0d1117; font-weight: 700; border-radius: 50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:13px; margin-top:2px; }
+  .recommend .phase-text { font-size: 14px; }
+  .recommend .phase-text strong { color: #3fb950; }
+
+  .note { font-size: 12.5px; color: #8b949e; font-style: italic; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>MedDINOv3 — Research Avenue Analysis</h1>
+  <p class="subtitle">
+    CHD Cardiac CTA · Feature learning strategy for CECT domain · May 2026
+    <br>Data now: ~200 labeled CECT &nbsp;|&nbsp; Data soon: ~2,000 labeled CECT
+  </p>
+
+  <!-- ── Quick Start ── -->
+  <h2 style="margin-top:28px;">Quick Start — Feature Viewers</h2>
+  <p style="margin-bottom:14px;">Run from <code style="background:#161b22;padding:2px 6px;border-radius:4px;font-size:13px;">/Users/saschastocker/Documents/Stanford/Akshay/MedDINOv3</code></p>
+
+  <div style="background:#161b22;border:1px solid #21262d;border-radius:10px;padding:20px 24px;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span class="chip blue">3D Viewer</span>
+      <span style="color:#8b949e;font-size:13px;">Slicer-style · axial / coronal / sagittal + 3D isosurface</span>
+    </div>
+    <pre style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:14px 16px;font-size:13px;color:#e6edf3;overflow-x:auto;line-height:1.6;">python feature_viewer_3d.py \
+--nifti /Users/saschastocker/Documents/data/ClincCasesSanjibnnUnetSetup/imagesTs/BAF002_0000.nii.gz \
+--checkpoint meddinov3_2d.pth \
+--clip -1000 1000</pre>
+    <div style="margin-top:12px;display:flex;gap:24px;flex-wrap:wrap;">
+      <div style="font-size:13px;"><span style="color:#8b949e;">Scroll:</span> change slice</div>
+      <div style="font-size:13px;"><span style="color:#8b949e;">Left-click (2D panel):</span> query similarity</div>
+      <div style="font-size:13px;"><span style="color:#8b949e;">Right-click / R:</span> reset</div>
+      <div style="font-size:13px;"><span style="color:#8b949e;">+/−:</span> threshold</div>
+      <div style="font-size:13px;"><span style="color:#8b949e;">S:</span> screenshot</div>
+    </div>
+    <div style="margin-top:10px;font-size:12.5px;color:#8b949e;">
+      Optional flags: &nbsp;
+      <code style="background:#0d1117;padding:2px 5px;border-radius:3px;">--max_slices 64</code> to limit depth (faster) &nbsp;
+      <code style="background:#0d1117;padding:2px 5px;border-radius:3px;">--feat_size 224</code> for lower memory &nbsp;
+      <code style="background:#0d1117;padding:2px 5px;border-radius:3px;">--batch_size 2</code> if MPS runs out of memory
+    </div>
+  </div>
+
+  <div style="background:#161b22;border:1px solid #21262d;border-radius:10px;padding:20px 24px;margin-bottom:28px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span class="chip green">2D Viewer</span>
+      <span style="color:#8b949e;font-size:13px;">Paper-style · axial scroll + PCA / similarity overlay</span>
+    </div>
+    <pre style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:14px 16px;font-size:13px;color:#e6edf3;overflow-x:auto;line-height:1.6;">python feature_viewer_2d.py \
+--nifti /Users/saschastocker/Documents/data/ClincCasesSanjibnnUnetSetup/imagesTs/BAF002_0000.nii.gz \
+--checkpoint meddinov3_2d.pth \
+--clip -1000 1000</pre>
+    <div style="margin-top:10px;font-size:12.5px;color:#8b949e;">
+      Optional flags: &nbsp;
+      <code style="background:#0d1117;padding:2px 5px;border-radius:3px;">--feat_size 224</code> for faster extraction &nbsp;
+      <code style="background:#0d1117;padding:2px 5px;border-radius:3px;">--max_slices 64</code> to subsample &nbsp;
+      <code style="background:#0d1117;padding:2px 5px;border-radius:3px;">--layer 8</code> to try an earlier layer
+    </div>
+  </div>
+
+  <!-- ── Context ── -->
+  <h2>The Core Problem</h2>
+  <p>
+    MedDINOv3 was pretrained on <strong>CT-3M</strong>, a broad CT corpus dominated by non-contrast
+    abdominal/chest scans and normalized with ImageNet statistics. Your dataset is
+    <strong>cardiac CTA (CECT)</strong> — contrast-enhanced, where the blood pool,
+    vessel walls, and cardiac chambers are 200–600 HU brighter than they would be
+    on the pretraining distribution. The model's feature manifold was never exposed
+    to contrast-enhanced anatomy, so:
+  </p>
+  <ul>
+    <li>Features that should fire on "aortic wall" fire on "dense soft tissue"</li>
+    <li>Intra-cardiac structure boundaries (ASD, VSD, valve anatomy) are invisible to the encoder</li>
+    <li>The model generalises to gross anatomy (ribs, lung, kidney outline) but not CHD-specific substructure</li>
+  </ul>
+
+  <div class="data-box" style="margin-top:16px; margin-bottom:0;">
+    <div class="data-item"><div class="label">Pretraining domain</div><div class="value">NCCT / mixed, ~3M slices</div></div>
+    <div class="data-item"><div class="label">Your domain</div><div class="value">Cardiac CTA (CECT)</div></div>
+    <div class="data-item"><div class="label">Labeled now</div><div class="value">~200 volumes</div></div>
+    <div class="data-item"><div class="label">Labeled soon</div><div class="value">~2,000 volumes</div></div>
+    <div class="data-item"><div class="label">Structures of interest</div><div class="value">Chambers, aorta, PA, valves</div></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <h2 style="margin-top:44px;">The Three Avenues</h2>
+
+  <!-- ── Avenue 1 ── -->
+  <div class="avenue-card">
+    <div class="avenue-header">
+      <div class="avenue-num num1">1</div>
+      <div>
+        <div class="avenue-title">Segmentation Fine-tuning (Current Setup)</div>
+        <div class="avenue-subtitle">nnUNet + frozen/unfrozen MedDINOv3 backbone · supervised on labeled CECT</div>
+      </div>
+      <div style="margin-left:auto;"><span class="chip blue">Running now</span></div>
+    </div>
+
+    <p>
+      The Primus decoder learns to map MedDINOv3's pretrained features to segmentation labels.
+      The backbone can be partially or fully unfrozen so that features shift toward CECT anatomy.
+      This is the cheapest intervention and already running on Sherlock.
+    </p>
+
+    <div class="cols">
+      <div class="col-box pros">
+        <h4>Pros</h4>
+        <ul>
+          <li>Already running — no extra engineering</li>
+          <li>Supervised signal directly targets the structures you care about</li>
+          <li>Even a frozen backbone with an adapted decoder can partially close the domain gap</li>
+          <li>nnUNet handles class imbalance, augmentation, patch scheduling automatically</li>
+          <li>100 labeled images can work with strong pretraining if anatomy is consistent</li>
+        </ul>
+      </div>
+      <div class="col-box cons">
+        <h4>Cons</h4>
+        <ul>
+          <li>Domain shift is never truly fixed — encoder features remain NCCT-biased</li>
+          <li>100 labeled volumes is marginal for CHD substructure (VSD, AVSD, valve morphology vary enormously)</li>
+          <li>Backbone unfreezing with few labels risks catastrophic forgetting of pretrained structure</li>
+          <li>No cross-slice context in the 2D model — each slice processed independently</li>
+          <li>CECT HU shift means early-layer patch embeddings are off from day 1</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="warning">
+      <div class="wt">Key risk with 100 images</div>
+      CHD labels vary enormously by defect subtype (TOF, TGA, AVSD, etc.). 100 volumes will
+      likely have thin coverage across subtypes. The model may learn the dominant anatomy
+      but fail on rare variants — exactly the cases where clinical value is highest.
+    </div>
+
+    <div class="feasibility-bar"><div class="label">Data efficiency</div><div class="bar-track"><div class="bar-fill" style="width:55%;background:#58a6ff;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Feature quality</div><div class="bar-track"><div class="bar-fill" style="width:35%;background:#58a6ff;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Engineering effort</div><div class="bar-track"><div class="bar-fill" style="width:10%;background:#3fb950;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Substructure awareness</div><div class="bar-track"><div class="bar-fill" style="width:30%;background:#f85149;"></div></div></div>
+
+    <div class="data-box">
+      <div class="data-item"><div class="label">Min useful labeled data</div><div class="value">100–300</div></div>
+      <div class="data-item"><div class="label">Strong performance threshold</div><div class="value">500+</div></div>
+      <div class="data-item"><div class="label">Unlabeled CECT useful?</div><div class="value">Not directly</div></div>
+      <div class="data-item"><div class="label">Time to first result</div><div class="value">Days (already running)</div></div>
+    </div>
+  </div>
+
+  <!-- ── Avenue 2 ── -->
+  <div class="avenue-card">
+    <div class="avenue-header">
+      <div class="avenue-num num2">2</div>
+      <div>
+        <div class="avenue-title">Full 3D DINO Pretraining from MedDINOv3 Init</div>
+        <div class="avenue-subtitle">Continue SSL pretraining on CECT using 3D inflated weights · random 3D masking</div>
+      </div>
+      <div style="margin-left:auto;"><span class="chip yellow">Feasible at 2K scale</span></div>
+    </div>
+
+    <p>
+      Start from the inflated 3D MedDINOv3 checkpoint and continue DINO/iBOT self-supervised
+      pretraining on your 2,000 CECT volumes. The model learns to reconstruct masked 3D patches,
+      forcing it to build a CECT-specific, volumetrically-aware feature space. The depth
+      positional encoding gets trained instead of being random.
+    </p>
+
+    <div class="cols">
+      <div class="col-box pros">
+        <h4>Pros</h4>
+        <ul>
+          <li>Directly solves the HU domain gap at the encoder level</li>
+          <li>Trains the depth positional encoding (currently random/contaminated)</li>
+          <li>True 3D cross-slice attention — learns volumetric structure</li>
+          <li>2,000 unlabeled CECT volumes are sufficient to continue SSL pretraining</li>
+          <li>Initializing from inflated weights (not random) dramatically reduces data needed vs. from scratch</li>
+          <li>Features would be CECT-native before any segmentation fine-tuning</li>
+        </ul>
+      </div>
+      <div class="col-box cons">
+        <h4>Cons</h4>
+        <ul>
+          <li>Computationally very expensive — 3D ViT-B on full cardiac CTA volumes</li>
+          <li>Memory: full cardiac CTA at native resolution won't fit; needs aggressive patching</li>
+          <li>Random 3D masking does not know about anatomy — may mask too much background (air, non-cardiac structures)</li>
+          <li>Significant engineering to extend 2D DINO training pipeline to 3D</li>
+          <li>2,000 volumes is the lower bound; MedDINOv3 itself used ~10,000+ volume-equivalents</li>
+          <li>Risk of forgetting NCCT structural priors if learning rate too high</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="warning">
+      <div class="wt">The memory wall</div>
+      A full cardiac CTA is typically 512×512×300+. At patch_size=(2,16,16), that is ~150,000 tokens.
+      ViT-B self-attention is O(n²) — this is infeasible at full resolution.
+      You would need to crop to cardiac ROI (~200×200×150), use larger d_patch (4–8),
+      or switch to a windowed/local attention variant. Each of these is a non-trivial design choice.
+    </div>
+
+    <div class="feasibility-bar"><div class="label">Data efficiency</div><div class="bar-track"><div class="bar-fill" style="width:45%;background:#3fb950;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Feature quality (if done)</div><div class="bar-track"><div class="bar-fill" style="width:85%;background:#3fb950;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Engineering effort</div><div class="bar-track"><div class="bar-fill" style="width:90%;background:#f85149;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Substructure awareness</div><div class="bar-track"><div class="bar-fill" style="width:50%;background:#d29922;"></div></div></div>
+
+    <div class="data-box">
+      <div class="data-item"><div class="label">Min unlabeled CECT needed</div><div class="value">500–1,000</div></div>
+      <div class="data-item"><div class="label">Strong pretraining threshold</div><div class="value">2,000–5,000</div></div>
+      <div class="data-item"><div class="label">GPU memory required</div><div class="value">40+ GB (A100)</div></div>
+      <div class="data-item"><div class="label">Time to first result</div><div class="value">Weeks (engineering + training)</div></div>
+    </div>
+  </div>
+
+  <!-- ── Avenue 3 ── -->
+  <div class="avenue-card">
+    <div class="avenue-header">
+      <div class="avenue-num num3">3</div>
+      <div>
+        <div class="avenue-title">Anatomy-Guided Masked Pretraining</div>
+        <div class="avenue-subtitle">TotalSegmentator masks · structure-aware DINO masking · cardiac-focused SSL</div>
+      </div>
+      <div style="margin-left:auto;"><span class="chip yellow">Most novel · high payoff</span></div>
+    </div>
+
+    <p>
+      Run TotalSegmentator (or a cardiac-specific segmentor) to generate pseudo-labels for
+      anatomical structures (aorta, PA, RA/LA/RV/LV, valves). Use these masks to guide the
+      DINO masking strategy: instead of masking random patches, mask entire anatomical
+      substructures and force the model to reconstruct them from context. This teaches the
+      encoder that different cardiac substructures are semantically distinct entities —
+      not just "dense tissue at location X."
+    </p>
+
+    <div class="cols">
+      <div class="col-box pros">
+        <h4>Pros</h4>
+        <ul>
+          <li>Directly encodes anatomical knowledge into the SSL objective</li>
+          <li>Forces the model to separate aorta from PA from chambers in feature space</li>
+          <li>Can work in 2D (per-slice masking) — no memory wall from Avenue 2</li>
+          <li>Pseudo-labels are free (TotalSegmentator takes ~30s per volume on GPU)</li>
+          <li>More data-efficient than random masking — each masked patch carries more signal</li>
+          <li>Most directly addresses your goal: feature separation by cardiac substructure</li>
+          <li>Works well even with 500–1,000 unlabeled CECT volumes</li>
+          <li>Novel research contribution — anatomy-guided DINO masking is not well explored</li>
+        </ul>
+      </div>
+      <div class="col-box cons">
+        <h4>Cons</h4>
+        <ul>
+          <li>TotalSegmentator is trained on "normal" anatomy — CHD patients have abnormal structure; pseudo-labels may be wrong precisely where it matters most</li>
+          <li>Masking strategy design is non-trivial: mask one structure vs. multiple? mask 50% of structure or all of it?</li>
+          <li>Engineering: need to modify the DINO data pipeline to accept anatomical masks</li>
+          <li>Possible mode collapse: model learns "mask = structure boundary" as a shortcut</li>
+          <li>Requires running TotalSegmentator at scale on 2,000 volumes (compute cost)</li>
+          <li>Validation is harder — hard to know if features improved without downstream eval</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="highlight">
+      <div class="hl-title">Why this is the most interesting research angle</div>
+      <p style="margin:0; font-size:14px;">
+        Standard DINO masking treats every patch as equally informative. In cardiac CTA,
+        the aortic root and the right ventricular outflow tract are adjacent spatially but
+        completely distinct clinically. Anatomy-guided masking encodes this prior directly:
+        "reconstruct the aortic arch from the surrounding context" is a much harder and more
+        clinically meaningful pretext task than "reconstruct a random 16×16 patch."
+        If this works, the CLS token and patch tokens will naturally cluster by cardiac substructure
+        without any label supervision — exactly what you need for few-shot CHD segmentation.
+      </p>
+    </div>
+
+    <div class="warning">
+      <div class="wt">The CHD anatomy problem</div>
+      TotalSegmentator will fail on the most severe CHD cases — transposition, single ventricle,
+      heterotaxy. These are exactly the cases with the highest clinical complexity.
+      Mitigation: use TotalSegmentator only on "simpler" cases (ASD, VSD, mild coarctation)
+      for pretraining, then fine-tune with manual labels on complex cases. Or train a
+      CHD-specific rough segmentor first using your 100 labeled scans.
+    </div>
+
+    <div class="feasibility-bar"><div class="label">Data efficiency</div><div class="bar-track"><div class="bar-fill" style="width:75%;background:#3fb950;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Feature quality</div><div class="bar-track"><div class="bar-fill" style="width:80%;background:#3fb950;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Engineering effort</div><div class="bar-track"><div class="value" style="width:65%;"></div><div class="bar-fill" style="width:65%;background:#d29922;"></div></div></div>
+    <div class="feasibility-bar"><div class="label">Substructure awareness</div><div class="bar-track"><div class="bar-fill" style="width:90%;background:#3fb950;"></div></div></div>
+
+    <div class="data-box">
+      <div class="data-item"><div class="label">Min CECT needed</div><div class="value">200–500</div></div>
+      <div class="data-item"><div class="label">Sweet spot</div><div class="value">1,000–2,000</div></div>
+      <div class="data-item"><div class="label">Labels required for pretraining</div><div class="value">None (pseudo from TotalSeg)</div></div>
+      <div class="data-item"><div class="label">Time to first result</div><div class="value">1–2 months engineering</div></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <h2>Comparison at a Glance</h2>
+  <table class="cmp-table">
+    <thead>
+      <tr>
+        <th>Criterion</th>
+        <th>1 · Seg Fine-tune</th>
+        <th>2 · 3D SSL Pretrain</th>
+        <th>3 · Anatomy-Guided SSL</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Fixes HU domain gap?</td>
+        <td><span class="chip yellow">Partially</span></td>
+        <td><span class="chip green">Yes</span></td>
+        <td><span class="chip green">Yes</span></td>
+      </tr>
+      <tr>
+        <td>Substructure separation</td>
+        <td><span class="chip yellow">Via supervision only</span></td>
+        <td><span class="chip yellow">Random masking — limited</span></td>
+        <td><span class="chip green">By design</span></td>
+      </tr>
+      <tr>
+        <td>Works with 200 images</td>
+        <td><span class="chip yellow">Marginal</span></td>
+        <td><span class="chip red">No</span></td>
+        <td><span class="chip green">Yes (200+ CECT)</span></td>
+      </tr>
+      <tr>
+        <td>Works with 2,000 images</td>
+        <td><span class="chip green">Strong baseline</span></td>
+        <td><span class="chip yellow">Feasible, memory hard</span></td>
+        <td><span class="chip green">Very strong</span></td>
+      </tr>
+      <tr>
+        <td>3D cross-slice context</td>
+        <td><span class="chip red">No (2D slices)</span></td>
+        <td><span class="chip green">Yes</span></td>
+        <td><span class="chip yellow">Optional (2D or 3D)</span></td>
+      </tr>
+      <tr>
+        <td>Engineering complexity</td>
+        <td><span class="chip green">Done</span></td>
+        <td><span class="chip red">High</span></td>
+        <td><span class="chip yellow">Moderate</span></td>
+      </tr>
+      <tr>
+        <td>CHD anatomy robustness</td>
+        <td><span class="chip yellow">Depends on labels</span></td>
+        <td><span class="chip yellow">Depends on data mix</span></td>
+        <td><span class="chip red">TotalSeg fails on severe CHD</span></td>
+      </tr>
+      <tr>
+        <td>Novelty / research value</td>
+        <td><span class="chip red">Standard</span></td>
+        <td><span class="chip yellow">Incremental</span></td>
+        <td><span class="chip green">High</span></td>
+      </tr>
+      <tr>
+        <td>GPU cost</td>
+        <td><span class="chip green">Low (A40 fine)</span></td>
+        <td><span class="chip red">Very high (A100 ×4+)</span></td>
+        <td><span class="chip yellow">Moderate (A40 fine)</span></td>
+      </tr>
+      <tr>
+        <td>Time to result</td>
+        <td><span class="chip green">Days</span></td>
+        <td><span class="chip red">Months</span></td>
+        <td><span class="chip yellow">1–2 months</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <h2>Data Requirements — Honest Estimates</h2>
+  <p>
+    These are rough lower bounds based on analogous SSL literature (DINOv2, MAE, nnUNet transfer
+    learning papers). Exact numbers depend heavily on CHD subtype diversity and label quality.
+  </p>
+  <table class="cmp-table">
+    <thead>
+      <tr><th>Task</th><th>Absolute minimum</th><th>For solid performance</th><th>For SOTA</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Supervised seg (nnUNet, no pretraining)</td><td>200</td><td>500–1,000</td><td>2,000+</td></tr>
+      <tr><td>Seg fine-tune from MedDINOv3 (frozen encoder)</td><td>50–100</td><td>200–500</td><td>1,000+</td></tr>
+      <tr><td>Seg fine-tune (unfrozen encoder)</td><td>200</td><td>500</td><td>1,500+</td></tr>
+      <tr><td>2D DINO continued pretraining (CECT domain)</td><td>500 volumes (~75K slices)</td><td>2,000+</td><td>10,000+</td></tr>
+      <tr><td>3D DINO continued pretraining</td><td>1,000</td><td>3,000–5,000</td><td>10,000+</td></tr>
+      <tr><td>Anatomy-guided 2D SSL (Avenue 3)</td><td>200 CECT</td><td>500–1,000</td><td>2,000</td></tr>
+    </tbody>
+  </table>
+  <p class="note" style="margin-top:10px;">
+    Note: "volumes" assumes full cardiac CTAs (~150–400 slices each).
+    Unlabeled data counts for SSL; labeled data counts for fine-tuning.
+    Your 2,000 fully-segmented CECT dataset would be exceptionally strong for any of these avenues
+    since you get both the unlabeled SSL signal and the supervised signal simultaneously.
+  </p>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <div class="recommend">
+    <h2 style="color:#3fb950; border-color:#2ea043;">Recommended Path</h2>
+
+    <div class="phase">
+      <div class="phase-num">1</div>
+      <div class="phase-text">
+        <strong>Now (0–3 months):</strong> Run Avenue 1 to completion on your 100 labeled images.
+        This gives you a segmentation baseline and tells you how bad the domain gap actually is in
+        practice. Evaluate per-structure Dice across CHD subtypes — if you see >0.7 Dice on the
+        major structures, the pretrained features are transferring well enough to continue.
+        <br><span class="note">Key experiment: compare frozen encoder vs. unfrozen at epochs 50–100. If unfreezing hurts, the pretrained features are stable; if it helps, domain adaptation is needed.</span>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-num">2</div>
+      <div class="phase-text">
+        <strong>Near-term (when 2,000 images arrive):</strong> Pursue Avenue 3 first,
+        not Avenue 2. Run TotalSegmentator on all 2,000 volumes (batch overnight on Sherlock).
+        Use the pseudo-labels for anatomy-guided SSL pretraining in 2D —
+        this is lower engineering cost than full 3D and higher payoff than random masking.
+        Train for 50–100 epochs from the MedDINOv3 2D checkpoint.
+        <br><span class="note">Exclude severe CHD outliers from TotalSeg masking (flag by checking if TotalSeg cardiac volume is implausible). Use those cases only in the supervised fine-tuning stage.</span>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-num">3</div>
+      <div class="phase-text">
+        <strong>Longer term (3–6 months, if compute allows):</strong> Attempt Avenue 2
+        using the anatomy-guided checkpoint from step 2 as init (not the random inflated weights).
+        Now the depth positional encoding can be fine-tuned with a meaningful feature base,
+        and 3D cross-slice context can close the last gap.
+        <br><span class="note">The Avenue 2 → 3 ordering matters enormously. Doing 3D SSL from a semantically meaningful 2D init will converge much faster and require far less data than from the inflation-only init.</span>
+      </div>
+    </div>
+
+    <div style="margin-top:20px; padding-top:16px; border-top:1px solid #2ea043;">
+      <strong style="color:#3fb950;">Bottom line on your 200-image question:</strong>
+      <p style="margin-top:6px; font-size:14px;">
+        200 labeled images <em>can</em> work for the segmentation fine-tune (Avenue 1) if your
+        CHD subtype distribution is reasonably uniform — nnUNet's patch-based training and
+        MedDINOv3's pretrained priors help a lot. But 200 is not enough to reliably learn rare
+        variant anatomy from scratch. The 2,000-image CECT dataset changes everything: it unlocks
+        Avenue 3 (the most promising path) and turns your labeled fine-tuning from marginal to
+        very strong. The 2,000-image arrival is the key milestone to plan your research around.
+      </p>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:28px; text-align:center;">
+    Generated May 2026 · MedDINOv3 CHD project · Sascha Stocker, Stanford
+  </p>
+
+</div>
+</body>
+</html>
