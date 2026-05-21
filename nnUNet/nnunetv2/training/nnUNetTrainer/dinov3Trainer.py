@@ -48,8 +48,7 @@ from torch import autocast, nn
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
 from torch.cuda import device_count
-# from torch import GradScaler
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from nnunetv2.configuration import ANISO_THRESHOLD, default_num_processes
@@ -157,7 +156,7 @@ class dinov3Trainer(nnUNetTrainer):
         self.num_input_channels = None  # -> self.initialize()
         self.network = None  # -> self.build_network_architecture()
         self.optimizer = self.lr_scheduler = None  # -> self.initialize
-        self.grad_scaler = GradScaler() if self.device.type == 'cuda' else None
+        self.grad_scaler = GradScaler('cuda') if self.device.type == 'cuda' else None
         self.loss = None  # -> self.initialize
 
         ### Simple logging. Don't take that away from me!
@@ -1672,16 +1671,25 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         optimizer = torch.optim.SGD(param_groups, momentum=0.99, nesterov=True,
                                     weight_decay=self.weight_decay)
 
-        class _PolyLRPerGroup(PolyLRScheduler):
+        max_steps = self.num_epochs
+        exponent  = 0.9
+
+        class _PolyLRPerGroup:
+            """Plain poly-LR with per-group initial_lr. Not a PyTorch _LRScheduler
+            subclass — avoids 'step before optimizer' and epoch-arg deprecation warnings
+            that fire because nnUNet calls lr_scheduler.step(current_epoch)."""
+            def __init__(self, opt):
+                self.optimizer = opt
+                self.ctr = 0
             def step(self, current_step=None):
                 if current_step is None or current_step == -1:
                     current_step = self.ctr
                     self.ctr += 1
-                scale = (1 - current_step / self.max_steps) ** self.exponent
+                scale = (1 - current_step / max_steps) ** exponent
                 for pg in self.optimizer.param_groups:
-                    pg['lr'] = pg.get('initial_lr', self.initial_lr) * scale
+                    pg['lr'] = pg.get('initial_lr', lr) * scale
 
-        lr_scheduler = _PolyLRPerGroup(optimizer, lr, self.num_epochs)
+        lr_scheduler = _PolyLRPerGroup(optimizer)
         return optimizer, lr_scheduler
 
     @staticmethod
