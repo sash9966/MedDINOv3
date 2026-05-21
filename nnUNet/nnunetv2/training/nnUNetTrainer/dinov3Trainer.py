@@ -311,7 +311,7 @@ class dinov3Trainer(nnUNetTrainer):
             '/scr2/yl_li/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth',
             map_location='cpu', weights_only=False
         )
-        # Load with strict=False so it won’t crash on mismatches
+        # Load with strict=False so it won't crash on mismatches
         missing, unexpected = model.load_state_dict(chkpt, strict=False)
 
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus
@@ -1391,10 +1391,10 @@ class dinov3_base_sam_Trainer(dinov3Trainer):
         model = vit_base(drop_path_rate=0.3, layerscale_init=1.0e-05)
         # Load checkpoint
         chkpt = torch.load(
-            ‘/scr2/yl_li/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth’,
-            map_location=’cpu’, weights_only=False
+            '/scr2/yl_li/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth',
+            map_location='cpu', weights_only=False
         )
-        # Load with strict=False so it won’t crash on mismatches
+        # Load with strict=False so it won't crash on mismatches
         missing, unexpected = model.load_state_dict(chkpt, strict=False)
 
         sam = _build_sam(model, patch_size[0] * 4, num_output_channels)
@@ -1435,7 +1435,7 @@ class dinov3_base_primus_Trainer(dinov3Trainer):
             '/scr2/yl_li/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth',
             map_location='cpu', weights_only=False
         )
-        # Load with strict=False so it won’t crash on mismatches
+        # Load with strict=False so it won't crash on mismatches
         missing, unexpected = model.load_state_dict(chkpt, strict=False)
 
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus
@@ -1546,7 +1546,7 @@ class dinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
             '/scr2/yl_li/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth',
             map_location='cpu', weights_only=False
         )
-        # Load with strict=False so it won’t crash on mismatches
+        # Load with strict=False so it won't crash on mismatches
         missing, unexpected = model.load_state_dict(chkpt, strict=False)
 
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus_Multiscale
@@ -1865,7 +1865,7 @@ def build_dinov3_base():
         map_location='cpu', weights_only=False
     )
     state_dict = chkpt
-    # Load with strict=False so it won’t crash on mismatches
+    # Load with strict=False so it won't crash on mismatches
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     print("\n=== Load Report ===")
     print("Missing keys (in model but not in checkpoint):")
