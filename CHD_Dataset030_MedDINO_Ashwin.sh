@@ -200,19 +200,21 @@ fi
 
 # ─────────────────────────────────────────────
 # Phase 4 — MedDINOv3 2D training (5 folds)
+# Shared markers: skipped if CHD_Dataset030_MedDINO.sh
+# already ran the 2D folds.
 # ─────────────────────────────────────────────
 echo "================================================================"
 echo "Phase 4: MedDINOv3 2D training — 5 folds"
 echo "================================================================"
 for FOLD in 0 1 2 3 4; do
-    KEY="p4_2d_MedDINO_fold${FOLD}"
-    if is_done "${KEY}"; then
-        echo "[SKIP] ${KEY}"
+    KEY="2d_D${DATASET_ID}_fold${FOLD}"
+    if is_shared_done "${KEY}"; then
+        echo "[SKIP] ${KEY} (already done by centering job)"
     else
         echo "--- ${KEY} ---"
         nnUNetv2_train ${DATASET_ID} ${CONFIG_2D} ${FOLD} \
             -tr ${TRAINER_2D} --npz
-        mark_done "${KEY}"
+        mark_shared_done "${KEY}"
     fi
 done
 
@@ -246,8 +248,8 @@ PRED_2D="${PRED_BASE}/MedDINO_2d_ensemble"
 PRED_3D="${PRED_BASE}/MedDINO_3d_ashwin_ensemble"
 mkdir -p "${PRED_2D}" "${PRED_3D}"
 
-if is_done "p6_infer_2d"; then
-    echo "[SKIP] p6_infer_2d"
+if is_shared_done "p6_infer_2d_D${DATASET_ID}"; then
+    echo "[SKIP] p6_infer_2d (already done by centering job)"
 else
     echo "--- p6_infer_2d ---"
     nnUNetv2_predict \
@@ -255,7 +257,7 @@ else
         -d ${DATASET_ID} -c ${CONFIG_2D} \
         -f 0 1 2 3 4 \
         -tr ${TRAINER_2D}
-    mark_done "p6_infer_2d"
+    mark_shared_done "p6_infer_2d_D${DATASET_ID}"
 fi
 
 if is_done "p6_infer_3d_ashwin"; then
