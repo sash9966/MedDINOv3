@@ -1609,7 +1609,9 @@ class meddinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
 
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus_Multiscale
         primus = Primus_Multiscale(embed_dim=768, patch_embed_size=16, num_classes=num_output_channels,
-                                   dino_encoder=model, interaction_indices=[2, 5, 8, 11])
+                                   dino_encoder=model, interaction_indices=[2, 5, 8, 11],
+                                   use_input_adapter=True)
+        print("[meddinov3_2d] CECT input adapter enabled (1x1 Conv2d, identity-init)")
         return primus
 
 
@@ -1656,7 +1658,8 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         depth_pe_ids = {id(p) for p in encoder.depth_pos_embed.parameters()}
         backbone_params = [p for p in encoder.parameters() if id(p) not in depth_pe_ids]
         depth_pe_params = list(encoder.depth_pos_embed.parameters())
-        decoder_params  = list(net.up_projection.parameters())
+        adapter_params  = list(net.input_adapter.parameters()) if net.input_adapter is not None else []
+        decoder_params  = list(net.up_projection.parameters()) + adapter_params
 
         lr = self.initial_lr
         param_groups = [
@@ -1786,7 +1789,9 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
             num_classes=num_output_channels,
             dino_encoder=model,
             interaction_indices=[2, 5, 8, 11],
+            use_input_adapter=True,
         )
+        print("[meddinov3_3d] CECT input adapter enabled (1x1x1 Conv3d, identity-init)")
         return primus
 
 

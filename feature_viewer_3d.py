@@ -65,10 +65,27 @@ def load_nifti(path):
     return data.transpose(2, 1, 0)   # (D, H, W) axial-first
 
 
+# Windows for CECT cardiac: blood pool (200-600 HU) + myocardium visible in ch0,
+# standard soft-tissue in ch1, wide/lung in ch2.
+CECT_WINDOWS = [(-200, 600), (-160, 240), (-1000, 400)]
+
+
 def slice_to_tensor(slc_hw, clip):
     v = np.clip(slc_hw, clip[0], clip[1])
     v = (v - clip[0]) / (clip[1] - clip[0])
     rgb = np.stack([v, v, v], axis=0).astype(np.float32)
+    rgb = (rgb - IMAGENET_MEAN[:, None, None]) / IMAGENET_STD[:, None, None]
+    return torch.from_numpy(rgb).unsqueeze(0)
+
+
+def slice_to_tensor_cect(slc_hw):
+    """3-channel multi-window preprocessing for contrast-enhanced cardiac CT."""
+    channels = []
+    for lo, hi in CECT_WINDOWS:
+        v = np.clip(slc_hw, lo, hi)
+        v = (v - lo) / (hi - lo)
+        channels.append(v.astype(np.float32))
+    rgb = np.stack(channels, axis=0)
     rgb = (rgb - IMAGENET_MEAN[:, None, None]) / IMAGENET_STD[:, None, None]
     return torch.from_numpy(rgb).unsqueeze(0)
 
@@ -114,7 +131,7 @@ def pca_rgb_global(feats):
 
 @torch.no_grad()
 def extract_features(raw_vol, ckpt_path, device='cpu', layer=11,
-                     feat_size=448, clip=(-1000, 400), batch_size=4):
+                     feat_size=448, clip=(-1000, 400), batch_size=4, cect=False):
     """
     Extract per-slice features with the 2D pretrained vit_base.
     raw_vol: (D, H, W) raw HU float32
@@ -146,7 +163,11 @@ def extract_features(raw_vol, ckpt_path, device='cpu', layer=11,
 
     fs = feat_size - (feat_size % 16)
     D = raw_vol.shape[0]
-    slices = [slice_to_tensor(raw_vol[d], clip) for d in range(D)]
+    if cect:
+        print('CECT mode: using 3-channel cardiac windows (-200,600) | (-160,240) | (-1000,400)')
+        slices = [slice_to_tensor_cect(raw_vol[d]) for d in range(D)]
+    else:
+        slices = [slice_to_tensor(raw_vol[d], clip) for d in range(D)]
     feats_list = []
 
     for start in range(0, D, batch_size):
@@ -508,6 +529,8 @@ def main():
     ap.add_argument('--max_slices', type=int, default=0,
                     help='Subsample depth to at most N slices (0 = all)')
     ap.add_argument('--clip',       type=float, nargs=2, default=[-1000, 400])
+    ap.add_argument('--cect',       action='store_true',
+                    help='Use 3-channel cardiac CECT windows instead of single-clip grayscale')
     ap.add_argument('--layer',      type=int, default=11)
     ap.add_argument('--threshold',  type=float, default=0.65)
     ap.add_argument('--batch_size', type=int, default=4)
@@ -531,7 +554,7 @@ def main():
 
     print(f'Extracting features  device={args.device}  layer={args.layer}  feat_size={args.feat_size}')
     feats = extract_features(raw, args.checkpoint, args.device, args.layer,
-                             args.feat_size, clip, args.batch_size)
+                             args.feat_size, clip, args.batch_size, cect=args.cect)
     print(f'Feature grid: {feats.shape[0]}x{feats.shape[1]}x{feats.shape[2]}  dim={feats.shape[3]}')
 
     if not _HAS_SKIMAGE:

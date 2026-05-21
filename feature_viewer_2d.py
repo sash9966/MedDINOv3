@@ -57,6 +57,23 @@ def preprocess_slice_for_display(slc, clip=(-1000, 400)):
     return (v - clip[0]) / (clip[1] - clip[0])
 
 
+# Windows for CECT cardiac: blood pool (200-600 HU) + myocardium visible in ch0,
+# standard soft-tissue in ch1, wide/lung in ch2.
+CECT_WINDOWS = [(-200, 600), (-160, 240), (-1000, 400)]
+
+
+def slice_to_tensor_cect(slc_hw):
+    """3-channel multi-window preprocessing for contrast-enhanced cardiac CT."""
+    channels = []
+    for lo, hi in CECT_WINDOWS:
+        v = np.clip(slc_hw, lo, hi)
+        v = (v - lo) / (hi - lo)
+        channels.append(v.astype(np.float32))
+    rgb = np.stack(channels, axis=0)
+    rgb = (rgb - IMAGENET_MEAN[:, None, None]) / IMAGENET_STD[:, None, None]
+    return torch.from_numpy(rgb).unsqueeze(0)
+
+
 def slice_to_tensor(slc_hw, clip=(-1000, 400)):
     """CT slice → (1, 3, H, W) tensor with ImageNet normalization."""
     v = np.clip(slc_hw, clip[0], clip[1])
@@ -98,7 +115,7 @@ def pca_rgb_2d(tokens_2d, fg_thr=0.5):
 
 @torch.no_grad()
 def extract_features(vol, ckpt_path, device='cpu', layer=11,
-                     feat_size=448, clip=(-1000, 400), batch_size=4):
+                     feat_size=448, clip=(-1000, 400), batch_size=4, cect=False):
     """
     Extract per-slice features using the 2D pretrained vit_base.
     vol: (D, H, W) float32 raw HU values
@@ -133,7 +150,11 @@ def extract_features(vol, ckpt_path, device='cpu', layer=11,
     Hp, Wp = fs // 16, fs // 16
 
     feats_list = []
-    slices = [slice_to_tensor(vol[d], clip) for d in range(D)]
+    if cect:
+        print('CECT mode: using 3-channel cardiac windows (-200,600) | (-160,240) | (-1000,400)')
+        slices = [slice_to_tensor_cect(vol[d]) for d in range(D)]
+    else:
+        slices = [slice_to_tensor(vol[d], clip) for d in range(D)]
 
     for start in range(0, D, batch_size):
         batch = torch.cat(slices[start:start + batch_size], dim=0).to(device)
@@ -321,6 +342,8 @@ def main():
                     help='Subsample depth to this many slices (0 = all)')
     ap.add_argument('--clip',       type=float, nargs=2, default=[-1000, 400],
                     help='HU clip window for display and preprocessing')
+    ap.add_argument('--cect',       action='store_true',
+                    help='Use 3-channel cardiac CECT windows instead of single-clip grayscale')
     ap.add_argument('--layer',      type=int, default=11,
                     help='Transformer layer index for feature extraction')
     ap.add_argument('--batch_size', type=int, default=4,
@@ -346,7 +369,8 @@ def main():
     print(f'Extracting features  device={args.device}  layer={args.layer}  '
           f'feat_size={args.feat_size}')
     feats = extract_features(raw, args.checkpoint, args.device, args.layer,
-                             args.feat_size, tuple(args.clip), args.batch_size)
+                             args.feat_size, tuple(args.clip), args.batch_size,
+                             cect=args.cect)
     Dp, Hp, Wp, C = feats.shape
     print(f'Volume {D}×{H}×{W}  →  feature grid {Dp}×{Hp}×{Wp}  {C}-d')
 

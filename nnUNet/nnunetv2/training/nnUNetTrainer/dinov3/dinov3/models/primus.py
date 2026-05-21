@@ -119,7 +119,8 @@ class Primus_Multiscale(AbstractDynamicNetworkArchitectures):
         decoder_norm=LayerNormNd,
         decoder_act=nn.GELU,
         dino_encoder = None,
-        interaction_indices =[1,2,3,4]
+        interaction_indices =[1,2,3,4],
+        use_input_adapter: bool = False,
     ):
         """
         We follow a similar design as ViT-adapter, using intermediate layers and concat along channel dimension.
@@ -136,9 +137,21 @@ class Primus_Multiscale(AbstractDynamicNetworkArchitectures):
         self.up_projection.apply(InitWeights_He(1e-2))
         self.interaction_indices=interaction_indices
 
+        # Lightweight CECT domain adapter: 1x1 conv remaps 3 input channels into
+        # the HU-window space the pretrained backbone expects. Identity-initialised
+        # so training starts from the same point as no-adapter. ~9 learnable params.
+        if use_input_adapter:
+            self.input_adapter = nn.Conv2d(3, 3, kernel_size=1, bias=True)
+            nn.init.eye_(self.input_adapter.weight.view(3, 3))
+            nn.init.zeros_(self.input_adapter.bias)
+        else:
+            self.input_adapter = None
+
     def forward(self, x, ret_mask=False):
         assert x.shape[1] == 1
         x = x.repeat(1,3,1,1)
+        if self.input_adapter is not None:
+            x = self.input_adapter(x)
         hier = self.dino_encoder.get_intermediate_layers(x,  n=self.interaction_indices, reshape = True)
         hier = torch.cat(hier, dim=1)
         dec_out = self.up_projection(hier)
@@ -219,6 +232,7 @@ class Primus_Multiscale3D(AbstractDynamicNetworkArchitectures):
         decoder_act=nn.GELU,
         dino_encoder=None,
         interaction_indices=None,
+        use_input_adapter: bool = False,
     ):
         super().__init__()
         if interaction_indices is None:
@@ -237,12 +251,23 @@ class Primus_Multiscale3D(AbstractDynamicNetworkArchitectures):
         self.up_projection.apply(InitWeights_He(1e-2))
         self.interaction_indices = interaction_indices
 
+        # Lightweight CECT domain adapter: 1x1x1 conv remaps 3 input channels.
+        # Identity-initialised; ~9 learnable params. Placed before the 3D patch
+        # embedding so the backbone sees NCCT-like channel representations.
+        if use_input_adapter:
+            self.input_adapter = nn.Conv3d(3, 3, kernel_size=1, bias=True)
+            nn.init.eye_(self.input_adapter.weight.view(3, 3))
+            nn.init.zeros_(self.input_adapter.bias)
+        else:
+            self.input_adapter = None
+
     def forward(self, x, ret_mask=False):
         # x: (B, C_in, D, H, W) — C_in is typically 1 from nnUNet.
-        # The pretrained encoder may expect more channels (e.g. 3); expand if needed.
         enc_chans = self.dino_encoder.patch_embed.proj.weight.shape[1]
         if x.shape[1] != enc_chans:
             x = x.expand(-1, enc_chans, -1, -1, -1).contiguous()
+        if self.input_adapter is not None:
+            x = self.input_adapter(x)
         hier = self.dino_encoder.get_intermediate_layers(
             x, n=self.interaction_indices, reshape=True
         )  # list of (B, embed_dim, D', H', W')
