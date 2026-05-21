@@ -125,9 +125,16 @@ def extract_features(vol, ckpt_path, device='cpu', layer=11,
 
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     if 'teacher' in ckpt:
+        # MedDINOv3 pretrained format
         sd = {k.replace('backbone.', ''): v
               for k, v in ckpt['teacher'].items()
               if k.startswith('backbone.')}
+    elif 'network_weights' in ckpt:
+        # nnUNet fine-tuned checkpoint — extract dino_encoder submodule
+        print('[Viewer] Detected nnUNet checkpoint — extracting dino_encoder weights')
+        sd = {k[len('dino_encoder.'):]: v
+              for k, v in ckpt['network_weights'].items()
+              if k.startswith('dino_encoder.')}
     else:
         sd = ckpt
 
