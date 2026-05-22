@@ -1616,22 +1616,31 @@ class meddinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
 
 class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Trainer):
     """
-    3D nnUNet trainer: slice-wise 2D ViT encoder + 3D convolutional decoder.
+    3D nnUNet trainer using weight-inflated MedDINOv3 ViT-B/16 backbone.
 
-    Each depth slice of the 3D patch is encoded independently by the pretrained
-    2D MedDINOv3 ViT (merged into the batch dimension for efficiency). The per-slice
-    feature maps are stacked along depth and decoded by a 3D convolutional decoder
-    that provides cross-slice context.
+    The patch embedding is inflated from Conv2d to Conv3d. All other ViT weights
+    are loaded unchanged. Three adaptations are applied for CECT CHD data:
 
-    This avoids the token-count explosion from feeding the full 3D volume into a ViT
-    pretrained on ~196 tokens: a 3d_fullres patch at d_patch=2 would produce 2000-4000
-    tokens (16-32x out-of-distribution), causing stagnant training and O(n^2) slowdown.
+      1. depth_pos_embed is zero-initialised (not random) so the model starts in
+         the pretrained 2D feature space and learns depth context from data only.
 
-    No weight inflation is required. Uses the same 2D checkpoint as the 2D trainer.
+      2. Differential learning rates: decoder runs at initial_lr, the pretrained
+         backbone runs at initial_lr * BACKBONE_LR_SCALE (default 0.05), and
+         depth_pos_embed runs at initial_lr * 0.5 (newly initialised, needs to learn).
+
+      3. Use centering inflation (--inflation centering) when regenerating the
+         checkpoint for better through-plane context learning.
 
     Required env vars:
-      MEDDINOV3_2D_CHECKPOINT      Path to the pretrained 2D checkpoint.
+      MEDDINOV3_3D_CHECKPOINT  Path to the inflated checkpoint.
+      MEDDINOV3_D_PATCH        Depth patch size (default 2).
       MEDDINOV3_BACKBONE_LR_SCALE  Backbone LR multiplier (default 0.05).
+
+    Recommended workflow:
+        python inflate_weights_3d.py --checkpoint meddinov3_2d.pth --d_patch 2 --inflation centering --out meddinov3_inflated_center_d2.pth
+        export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_center_d2.pth
+        export MEDDINOV3_D_PATCH=2
+        nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_primus_multiscale_Trainer
     """
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
@@ -1644,16 +1653,20 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         backbone_lr_scale = float(os.environ.get("MEDDINOV3_BACKBONE_LR_SCALE", "0.05"))
         net = self.network
 
-        backbone_params = list(net.dino_encoder.parameters())
+        encoder = net.dino_encoder
+        depth_pe_ids = {id(p) for p in encoder.depth_pos_embed.parameters()}
+        backbone_params = [p for p in encoder.parameters() if id(p) not in depth_pe_ids]
+        depth_pe_params = list(encoder.depth_pos_embed.parameters())
         adapter_params  = list(net.input_adapter.parameters()) if net.input_adapter is not None else []
         decoder_params  = list(net.up_projection.parameters()) + adapter_params
 
         lr = self.initial_lr
         param_groups = [
-            {'params': decoder_params,  'lr': lr,                     'initial_lr': lr,                     'name': 'decoder'},
+            {'params': decoder_params,  'lr': lr,                   'initial_lr': lr,                   'name': 'decoder'},
+            {'params': depth_pe_params, 'lr': lr * 0.5,             'initial_lr': lr * 0.5,             'name': 'depth_pos_embed'},
             {'params': backbone_params, 'lr': lr * backbone_lr_scale, 'initial_lr': lr * backbone_lr_scale, 'name': 'backbone'},
         ]
-        print(f'[meddinov3_3d] LR — decoder={lr:.2e}  backbone={lr*backbone_lr_scale:.2e}')
+        print(f'[meddinov3_3d] LR — decoder={lr:.2e}  depth_pe={lr*0.5:.2e}  backbone={lr*backbone_lr_scale:.2e}')
 
         optimizer = torch.optim.SGD(param_groups, momentum=0.99, nesterov=True,
                                     weight_decay=self.weight_decay)
@@ -1662,6 +1675,9 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         exponent  = 0.9
 
         class _PolyLRPerGroup:
+            """Plain poly-LR with per-group initial_lr. Not a PyTorch _LRScheduler
+            subclass — avoids 'step before optimizer' and epoch-arg deprecation warnings
+            that fire because nnUNet calls lr_scheduler.step(current_epoch)."""
             def __init__(self, opt):
                 self.optimizer = opt
                 self.ctr = 0
@@ -1687,7 +1703,7 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         enable_deep_supervision: bool = True,
     ) -> nn.Module:
         import os
-        from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base
+        from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base_3d
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus_Multiscale3D
 
         assert len(patch_size) == 3, (
@@ -1695,41 +1711,89 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
             f"(got {patch_size}). Use a 3d_fullres or 3d_lowres nnUNet configuration."
         )
 
-        ckpt_path = os.environ.get("MEDDINOV3_2D_CHECKPOINT", None)
+        d_patch = int(os.environ.get("MEDDINOV3_D_PATCH", "2"))
+        assert patch_size[0] % d_patch == 0, (
+            f"patch_size[0]={patch_size[0]} is not divisible by d_patch={d_patch}. "
+            "Adjust MEDDINOV3_D_PATCH or the nnUNet 3D configuration."
+        )
+
+        # Load inflated checkpoint.
+        ckpt_path = os.environ.get("MEDDINOV3_3D_CHECKPOINT", None)
         if ckpt_path is None or not os.path.isfile(ckpt_path):
             raise FileNotFoundError(
-                "MedDINOv3 2D checkpoint not found. Set MEDDINOV3_2D_CHECKPOINT:\n"
-                "  export MEDDINOV3_2D_CHECKPOINT=/path/to/meddinov3_2d.pth"
+                "No inflated 3D checkpoint found. "
+                "Run inflate_weights_3d.py first and set MEDDINOV3_3D_CHECKPOINT, e.g.:\n"
+                "  python inflate_weights_3d.py --d_patch 2 --out meddinov3_inflated_d2.pth\n"
+                "  export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_d2.pth\n"
+                "  export MEDDINOV3_D_PATCH=2"
             )
 
         chkpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         if "teacher" in chkpt:
+            state_dict = chkpt["teacher"]
             state_dict = {
                 k.replace("backbone.", ""): v
-                for k, v in chkpt["teacher"].items()
+                for k, v in state_dict.items()
                 if "ibot" not in k and "dino_head" not in k
             }
         else:
             state_dict = chkpt
 
-        model = vit_base(
+        # Verify the checkpoint's patch_embed weight matches d_patch before building the model.
+        ckpt_weight = state_dict.get("patch_embed.proj.weight")
+        if ckpt_weight is None:
+            raise KeyError("'patch_embed.proj.weight' not found in checkpoint.")
+        if ckpt_weight.dim() != 5:
+            raise ValueError(
+                f"Checkpoint patch_embed.proj.weight has {ckpt_weight.dim()} dims "
+                f"(shape {tuple(ckpt_weight.shape)}); expected 5D (inflated 3D weight). "
+                "Did you forget to run inflate_weights_3d.py?"
+            )
+        ckpt_d_patch = ckpt_weight.shape[2]
+        if ckpt_d_patch != d_patch:
+            raise ValueError(
+                f"Checkpoint was inflated with d_patch={ckpt_d_patch} but "
+                f"MEDDINOV3_D_PATCH={d_patch}. Re-run inflate_weights_3d.py with "
+                f"--d_patch {d_patch} or set MEDDINOV3_D_PATCH={ckpt_d_patch}."
+            )
+
+        # Auto-detect in_chans from checkpoint (pretrained on 3-channel multi-window CT).
+        # nnUNet CT datasets are 1-channel; Primus_Multiscale3D repeats the channel if needed.
+        in_chans = ckpt_weight.shape[1]
+
+        # Build 3D ViT and load weights.
+        model = vit_base_3d(
+            patch_size=16,
+            d_patch=d_patch,
+            in_chans=in_chans,
             drop_path_rate=0.2,
             layerscale_init=1.0e-05,
             n_storage_tokens=4,
             qkv_bias=False,
             mask_k_bias=True,
         )
-        missing, unexpected = model.load_state_dict(state_dict, strict=True)
 
-        tokens_per_slice = (patch_size[1] // 16) * (patch_size[2] // 16)
-        print(f"[meddinov3_3d] slice-wise encoding: {patch_size[0]} slices x {tokens_per_slice} tokens/slice "
-              f"(pretrained range: ~196)")
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        # depth_pos_embed.weight is new — expected in missing, not in checkpoint.
+        expected_missing = {"depth_pos_embed.weight"}
+        truly_missing = [k for k in missing if k not in expected_missing]
+        assert not unexpected, f"Unexpected keys when loading 3D checkpoint: {unexpected}"
+        assert not truly_missing, f"Missing keys when loading 3D checkpoint: {truly_missing}"
 
-        # d_patch=1: 3D decoder upsamples H and W only (depth already at full resolution).
+        # Zero-init depth_pos_embed so the model starts in the pretrained 2D feature
+        # space. Random init (trunc_normal std=0.02) adds ~0.5 magnitude noise per token
+        # which partially corrupts pretrained features from the first step.
+        with torch.no_grad():
+            model.depth_pos_embed.weight.zero_()
+        print("[meddinov3_3d] depth_pos_embed zero-initialised")
+
+        n_tokens = (patch_size[0] // d_patch) * (patch_size[1] // 16) * (patch_size[2] // 16)
+        print(f"[meddinov3_3d] d_patch={d_patch}, patch_size={patch_size}, tokens={n_tokens}")
+
         primus = Primus_Multiscale3D(
             embed_dim=768,
             patch_embed_size=16,
-            d_patch=1,
+            d_patch=d_patch,
             num_classes=num_output_channels,
             dino_encoder=model,
             interaction_indices=[2, 5, 8, 11],
@@ -1741,19 +1805,31 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
 
 class meddinov3_3d_ashwin_primus_multiscale_Trainer(meddinov3_3d_primus_multiscale_Trainer):
     """
-    Ashwin experiment variant of the 3D MedDINOv3 trainer.
+    Ashwin_3d_inflation variant of the 3D MedDINOv3 trainer.
 
-    Architecture is identical to meddinov3_3d_primus_multiscale_Trainer (slice-wise
-    2D ViT + 3D conv decoder). This class exists only to write results into a separate
-    nnUNet output directory so experiments can be compared side-by-side.
+    Identical to meddinov3_3d_primus_multiscale_Trainer in all respects EXCEPT:
+      - Expects a checkpoint inflated with inflate_weights_3d_ashwin.py
+        (channel-averaging strategy: sum 3 channels -> redistribute -> depth-tile).
+      - Named distinctly so nnUNet writes results under a separate directory, making
+        it straightforward to compare against the centering-inflation baseline.
 
-    Required env vars: same as parent (MEDDINOV3_2D_CHECKPOINT).
+    Required env vars (same as parent):
+      MEDDINOV3_3D_CHECKPOINT  Path to the Ashwin-inflated checkpoint.
+                               e.g. meddinov3_inflated_ashwin_d2.pth
+      MEDDINOV3_D_PATCH        Depth patch size (default 2).
+      MEDDINOV3_BACKBONE_LR_SCALE  Backbone LR multiplier (default 0.05).
+
+    Recommended workflow:
+        python inflate_weights_3d_ashwin.py --checkpoint meddinov3_2d.pth --d_patch 2 --out meddinov3_inflated_ashwin_d2.pth
+        export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_ashwin_d2.pth
+        export MEDDINOV3_D_PATCH=2
+        nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_ashwin_primus_multiscale_Trainer
     """
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
-        print("[meddinov3_3d_ashwin] slice-wise 2D ViT + 3D decoder (Ashwin experiment variant)")
+        print("[Ashwin_3d_inflation] Using Ashwin channel-averaging inflation strategy")
 
     @staticmethod
     def build_network_architecture(

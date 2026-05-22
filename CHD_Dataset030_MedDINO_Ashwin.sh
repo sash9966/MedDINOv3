@@ -60,8 +60,12 @@ D_PATCH=2
 REPO="/scratch/users/sastocke/MedDINOv3"
 SHARED_CKPT_DIR="/scratch/users/sastocke/meddinov3_checkpoints"
 RAW_CKPT="${SHARED_CKPT_DIR}/meddinov3_2d.pth"
+INFLATED_CKPT="${SHARED_CKPT_DIR}/meddinov3_inflated_ashwin_d${D_PATCH}.pth"
+INFLATE_SCRIPT="${REPO}/nnUNet/nnunetv2/training/nnUNetTrainer/dinov3/inflate_weights_3d_ashwin.py"
 
 export MEDDINOV3_2D_CHECKPOINT="${RAW_CKPT}"
+export MEDDINOV3_3D_CHECKPOINT="${INFLATED_CKPT}"
+export MEDDINOV3_D_PATCH="${D_PATCH}"
 
 IN_DIR="${nnUNet_raw}/${DATASET_NAME}/imagesTs"
 PRED_BASE="${nnUNet_results}/${DATASET_NAME}/predictions"
@@ -91,12 +95,14 @@ print_banner() {
     printf "║  %-66s ║\n" "Configs      : ${CONFIG_2D}  |  ${CONFIG_3D}"
     printf "║  %-66s ║\n" "Folds        : 0 1 2 3 4  (5-fold ensemble)"
     printf "║  %-66s ║\n" "Epochs       : 2D=100  3D=200"
-    printf "║  %-66s ║\n" "3D strategy  : slice-wise 2D ViT + 3D conv decoder (no inflation)"
+    printf "║  %-66s ║\n" "d_patch      : ${D_PATCH}  (3D depth tokenisation)"
+    printf "║  %-66s ║\n" "Inflation    : Ashwin_3d_inflation (channel-sum)"
     printf "║  %-66s ║\n" ""
     printf "║  %-66s ║\n" "Exp 1 — 2D   : ${TRAINER_2D}"
     printf "║  %-66s ║\n" "Exp 2 — 3D   : ${TRAINER_3D}"
     printf "║  %-66s ║\n" ""
-    printf "║  %-66s ║\n" "2D/3D ckpt   : ${RAW_CKPT}"
+    printf "║  %-66s ║\n" "2D ckpt      : ${RAW_CKPT}"
+    printf "║  %-66s ║\n" "3D ckpt      : ${INFLATED_CKPT}"
     printf "║  %-66s ║\n" "Raw data     : ${IN_DIR}"
     printf "║  %-66s ║\n" "Results      : ${nnUNet_results}/${DATASET_NAME}"
     printf "║  %-66s ║\n" "Inference    : ${PRED_BASE}"
@@ -161,7 +167,23 @@ print('Saved:', '${RAW_CKPT}')
 fi
 
 # ─────────────────────────────────────────────
-# Phase 2 — Plan and preprocess
+# Phase 2 — Inflate weights (Ashwin_3d_inflation, shared)
+# ─────────────────────────────────────────────
+if is_shared_done "inflate_ashwin_d${D_PATCH}"; then
+    echo "[SKIP] Phase 2: Ashwin-inflated checkpoint already exists"
+else
+    echo "================================================================"
+    echo "Phase 2: Ashwin_3d_inflation  d_patch=${D_PATCH}"
+    echo "================================================================"
+    python3 "${INFLATE_SCRIPT}" \
+--checkpoint "${RAW_CKPT}" \
+--d_patch "${D_PATCH}" \
+--out "${INFLATED_CKPT}"
+    mark_shared_done "inflate_ashwin_d${D_PATCH}"
+fi
+
+# ─────────────────────────────────────────────
+# Phase 3 — Plan and preprocess
 # ─────────────────────────────────────────────
 if is_done "p3_preprocess"; then
     echo "[SKIP] Phase 3: preprocess already done"

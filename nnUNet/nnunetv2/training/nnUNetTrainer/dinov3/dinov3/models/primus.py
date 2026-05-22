@@ -262,28 +262,17 @@ class Primus_Multiscale3D(AbstractDynamicNetworkArchitectures):
             self.input_adapter = None
 
     def forward(self, x, ret_mask=False):
-        # x: (B, C_in, D, H, W) from nnUNet (C_in typically 1).
-        B, C_in, D, H, W = x.shape
-        enc_chans = self.dino_encoder.patch_embed.proj.weight.shape[1]  # 3
-        if C_in != enc_chans:
+        # x: (B, C_in, D, H, W) — C_in is typically 1 from nnUNet.
+        enc_chans = self.dino_encoder.patch_embed.proj.weight.shape[1]
+        if x.shape[1] != enc_chans:
             x = x.expand(-1, enc_chans, -1, -1, -1).contiguous()
         if self.input_adapter is not None:
             x = self.input_adapter(x)
-
-        # Slice-wise encoding: run 2D ViT on every depth slice independently.
-        # Merge batch+depth so all slices go through the ViT in one fused call.
-        # (B, 3, D, H, W) -> (B*D, 3, H, W)
-        x_2d = x.permute(0, 2, 1, 3, 4).reshape(B * D, enc_chans, H, W)
         hier = self.dino_encoder.get_intermediate_layers(
-            x_2d, n=self.interaction_indices, reshape=True
-        )  # list of (B*D, embed_dim, H', W')
-        hier = torch.cat(hier, dim=1)  # (B*D, embed_dim*4, H', W')
-
-        # Restore depth dimension: (B, embed_dim*4, D, H', W')
-        _, C_feat, Hp, Wp = hier.shape
-        hier_3d = hier.reshape(B, D, C_feat, Hp, Wp).permute(0, 2, 1, 3, 4).contiguous()
-
-        return self.up_projection(hier_3d)  # (B, num_classes, D, H, W)
+            x, n=self.interaction_indices, reshape=True
+        )  # list of (B, embed_dim, D', H', W')
+        hier = torch.cat(hier, dim=1)  # (B, embed_dim*4, D', H', W')
+        return self.up_projection(hier)  # (B, num_classes, D, H, W)
 
     def compute_conv_feature_map_size(self, input_size):
         raise NotImplementedError("yuck")
