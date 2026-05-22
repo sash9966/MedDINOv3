@@ -84,7 +84,7 @@ print_banner() {
     printf "║  %-66s ║\n" "Dataset      : ${DATASET_NAME}  (ID=${DATASET_ID})"
     printf "║  %-66s ║\n" "Config       : ${CONFIG_2D}"
     printf "║  %-66s ║\n" "Trainer      : ${TRAINER_2D}"
-    printf "║  %-66s ║\n" "Folds        : 0 1 2 3 4  (5-fold ensemble)"
+    printf "║  %-66s ║\n" "Folds        : 0 only  (extend to 0-4 for full ensemble)"
     printf "║  %-66s ║\n" "Epochs       : 100"
     printf "║  %-66s ║\n" ""
     printf "║  %-66s ║\n" "2D ckpt      : ${RAW_CKPT}"
@@ -170,7 +170,7 @@ fi
 echo "================================================================"
 echo "Phase 3: MedDINOv3 2D training — 5 folds"
 echo "================================================================"
-for FOLD in 0 1 2 3 4; do
+for FOLD in 0; do
     KEY="2d_D${DATASET_ID}_fold${FOLD}"
     if is_shared_done "${KEY}"; then
         echo "[SKIP] ${KEY}"
@@ -199,7 +199,7 @@ else
     nnUNetv2_predict \
         -i "${IN_DIR}" -o "${PRED_2D}" \
         -d ${DATASET_ID} -c ${CONFIG_2D} \
-        -f 0 1 2 3 4 \
+        -f 0 \
         -tr ${TRAINER_2D}
     mark_shared_done "p6_infer_2d_D${DATASET_ID}"
 fi

@@ -110,7 +110,7 @@ print_banner() {
     printf "║  %-66s ║\n" "SLURM Job    : ${SLURM_JOB_ID:-manual}  node=${SLURMD_NODENAME:-local}"
     printf "║  %-66s ║\n" "Dataset      : ${DATASET_NAME}  (ID=${DATASET_ID})"
     printf "║  %-66s ║\n" "Configs      : ${CONFIG_2D}  |  ${CONFIG_3D}"
-    printf "║  %-66s ║\n" "Folds        : 0 1 2 3 4  (5-fold ensemble)"
+    printf "║  %-66s ║\n" "Folds        : 0 only  (extend to 0-4 for full ensemble)"
     printf "║  %-66s ║\n" "Epochs       : 2D=100  3D=200"
     printf "║  %-66s ║\n" "d_patch      : ${D_PATCH}  (3D depth tokenisation)"
     printf "║  %-66s ║\n" ""
@@ -223,7 +223,7 @@ fi
 echo "================================================================"
 echo "Phase 4: MedDINOv3 2D training — 5 folds"
 echo "================================================================"
-for FOLD in 0 1 2 3 4; do
+for FOLD in 0; do
     KEY="2d_D${DATASET_ID}_fold${FOLD}"
     if is_shared_done "${KEY}"; then
         echo "[SKIP] ${KEY}"
@@ -241,7 +241,7 @@ done
 echo "================================================================"
 echo "Phase 5: MedDINOv3 3D training — 5 folds  (d_patch=${D_PATCH})"
 echo "================================================================"
-for FOLD in 0 1 2 3 4; do
+for FOLD in 0; do
     KEY="p5_3d_MedDINO_fold${FOLD}"
     if is_done "${KEY}"; then
         echo "[SKIP] ${KEY}"
@@ -272,7 +272,7 @@ else
     nnUNetv2_predict \
         -i "${IN_DIR}" -o "${PRED_2D}" \
         -d ${DATASET_ID} -c ${CONFIG_2D} \
-        -f 0 1 2 3 4 \
+        -f 0 \
         -tr ${TRAINER_2D}
     mark_shared_done "p6_infer_2d_D${DATASET_ID}"
 fi
@@ -284,7 +284,7 @@ else
     nnUNetv2_predict \
         -i "${IN_DIR}" -o "${PRED_3D}" \
         -d ${DATASET_ID} -c ${CONFIG_3D} \
-        -f 0 1 2 3 4 \
+        -f 0 \
         -tr ${TRAINER_3D}
     mark_done "p6_infer_3d"
 fi
