@@ -55,7 +55,13 @@ CONFIG_2D="2d"
 CONFIG_3D="3d_fullres"
 TRAINER_2D="meddinov3_base_primus_multiscale_Trainer"
 TRAINER_3D="meddinov3_3d_ashwin_primus_multiscale_Trainer"
-D_PATCH=2
+
+# d_patch controls how many CT slices are merged into one depth token.
+# Larger d_patch = fewer tokens, closer to the ViT's pretraining distribution (~196 tokens).
+#   d_patch=2  → ~2400 tokens  (12x over pretrained — too many, ViT cannot learn)
+#   d_patch=8  → ~600 tokens   (3x over pretrained  — recommended)
+#   d_patch=16 → ~300 tokens   (close to pretrained — use if still slow to converge)
+D_PATCH=8
 
 REPO="/scratch/users/sastocke/MedDINOv3"
 SHARED_CKPT_DIR="/scratch/users/sastocke/meddinov3_checkpoints"
@@ -66,6 +72,11 @@ INFLATE_SCRIPT="${REPO}/nnUNet/nnunetv2/training/nnUNetTrainer/dinov3/inflate_we
 export MEDDINOV3_2D_CHECKPOINT="${RAW_CKPT}"
 export MEDDINOV3_3D_CHECKPOINT="${INFLATED_CKPT}"
 export MEDDINOV3_D_PATCH="${D_PATCH}"
+
+# Backbone LR scale: fraction of decoder LR applied to the pretrained ViT weights.
+# Set to 0 to freeze the backbone entirely for the first run (decoder-only warm-up),
+# then set back to 0.05 on subsequent submissions to fine-tune the backbone.
+export MEDDINOV3_BACKBONE_LR_SCALE=0.05
 
 IN_DIR="${nnUNet_raw}/${DATASET_NAME}/imagesTs"
 PRED_BASE="${nnUNet_results}/${DATASET_NAME}/predictions"

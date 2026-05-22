@@ -1,26 +1,46 @@
 """
 inflate_weights_3d.py — Inflate MedDINOv3 2D patch embedding to 3D.
 
-Follows the average-inflation strategy from TransSeg (arXiv:2302.04303):
-  w_3d = w_2d.unsqueeze(2).repeat(1, 1, d_patch, 1, 1) / d_patch
+Two inflation strategies (choose with --inflation):
+  average   : w_3d = w_2d.unsqueeze(2).repeat(1,1,d_patch,1,1) / d_patch
+              Preserves per-channel filter identity; all depth slices respond equally.
+  centering : w_3d has the pretrained 2D weights at the center depth slice,
+              zeros elsewhere. Model starts by focusing on the center slice and
+              learns to use surrounding context through fine-tuning.
 
 The 2D conv weight has shape (embed_dim, in_chans, P, P).
 The inflated 3D conv weight has shape (embed_dim, in_chans, d_patch, P, P).
-All other weights are copied unchanged.
+All other ViT weights are copied unchanged.
+
+Choosing d_patch
+----------------
+d_patch controls how many consecutive CT slices are merged into one depth token.
+The pretrained ViT was trained on ~196 tokens (14x14 at 224x224). Larger d_patch
+reduces token count and keeps the ViT closer to its pretraining distribution:
+
+  d_patch | depth tokens (40-slice patch) | total tokens | vs pretrained
+  --------+-------------------------------+--------------+---------------
+       2  |              20               |     2400     |    12x over
+       4  |              10               |     1200     |     6x over
+       8  |               5               |      600     |     3x over
+      16  |               2–3             |    240–360   |    ~2x over  ← recommended
+
+  Recommendation: d_patch=8 (good balance of depth resolution vs token count).
+  Use d_patch=16 if training is still slow to converge.
 
 Usage
 -----
-# From HuggingFace (downloads automatically):
-python inflate_weights_3d.py --d_patch 2 --out meddinov3_inflated_d2.pth
+# Centering inflation, d_patch=8 (recommended):
+python inflate_weights_3d.py --checkpoint meddinov3_2d.pth --d_patch 8 \
+--inflation centering --out meddinov3_inflated_center_d8.pth
 
-# From a local checkpoint:
-python inflate_weights_3d.py --checkpoint /path/to/model.pth --d_patch 2 --out meddinov3_inflated_d2.pth
-
-# Use centering inflation instead of average (center slice gets full weight, rest zero):
-python inflate_weights_3d.py --d_patch 2 --inflation centering --out meddinov3_inflated_center_d2.pth
+# Average inflation, d_patch=8:
+python inflate_weights_3d.py --checkpoint meddinov3_2d.pth --d_patch 8 \
+--out meddinov3_inflated_average_d8.pth
 
 After running, export the output path before training:
-  export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_d2.pth
+  export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_center_d8.pth
+  export MEDDINOV3_D_PATCH=8
   nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_primus_multiscale_Trainer
 """
 
@@ -91,7 +111,7 @@ def inflate_checkpoint(
     The returned dict is a flat state dict (not wrapped in 'teacher' etc.).
     """
     print(f"Loading checkpoint from: {ckpt_path}")
-    chkpt = torch.load(ckpt_path, map_location="cpu")
+    chkpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     # Unwrap MedDINOv3 teacher format if present.
     if isinstance(chkpt, dict) and "teacher" in chkpt:
@@ -167,8 +187,21 @@ def main():
 
     torch.save(inflated_state_dict, out_path)
     print(f"\nInflated checkpoint saved to: {out_path}")
-    print(f"\nTo use it for training:")
+
+    import math
+    patch_size = 16
+    print(f"\nToken count estimate for common 3d_fullres patch sizes (d_patch={args.d_patch}):")
+    for depth in [32, 40, 48, 64]:
+        for hw in [(192, 160), (224, 192)]:
+            h, w = hw
+            tokens = (depth // args.d_patch) * (h // patch_size) * (w // patch_size)
+            print(f"  patch ({depth:3d},{h},{w}): {tokens:5d} tokens  "
+                  f"({'OK' if tokens <= 400 else 'HIGH' if tokens <= 800 else 'VERY HIGH'})")
+    print(f"  Pretrained distribution: ~196 tokens")
+
+    print(f"\nTo use for training:")
     print(f"  export MEDDINOV3_3D_CHECKPOINT={out_path}")
+    print(f"  export MEDDINOV3_D_PATCH={args.d_patch}")
     print(f"  nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_primus_multiscale_Trainer")
 
 

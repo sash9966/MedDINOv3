@@ -21,18 +21,29 @@ Key difference from average/centering inflation (inflate_weights_3d.py):
   - Depth is NOT divided by d_patch — the channel averaging already renormalises the
     input-channel sum; depth copies preserve full channel-averaged response per slice.
 
+Choosing d_patch
+----------------
+d_patch controls how many consecutive CT slices are merged into one depth token.
+The pretrained ViT was trained on ~196 tokens (14x14 at 224x224). Larger d_patch
+reduces token count and keeps the ViT closer to its pretraining distribution:
+
+  d_patch | depth tokens (40-slice patch) | total tokens | vs pretrained
+  --------+-------------------------------+--------------+---------------
+       2  |              20               |     2400     |    12x over
+       4  |              10               |     1200     |     6x over
+       8  |               5               |      600     |     3x over  ← recommended
+      16  |               2–3             |    240–360   |    ~2x over
+
+  Recommendation: d_patch=8 balances depth resolution against token count.
+
 Usage
 -----
-python inflate_weights_3d_ashwin.py --d_patch 2 --out meddinov3_inflated_ashwin_d2.pth
-
-python inflate_weights_3d_ashwin.py \\
---checkpoint /path/to/meddinov3_2d.pth \\
---d_patch 2 \\
---out meddinov3_inflated_ashwin_d2.pth
+python inflate_weights_3d_ashwin.py --checkpoint meddinov3_2d.pth --d_patch 8 \
+--out meddinov3_inflated_ashwin_d8.pth
 
 After running:
-  export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_ashwin_d2.pth
-  export MEDDINOV3_D_PATCH=2
+  export MEDDINOV3_3D_CHECKPOINT=/path/to/meddinov3_inflated_ashwin_d8.pth
+  export MEDDINOV3_D_PATCH=8
   nnUNetv2_train DATASET_ID 3d_fullres 0 -tr meddinov3_3d_ashwin_primus_multiscale_Trainer
 """
 
@@ -94,7 +105,7 @@ def inflate_patch_embed_ashwin(weight_2d: torch.Tensor, d_patch: int) -> torch.T
 
 def inflate_checkpoint_ashwin(ckpt_path: str, d_patch: int) -> dict:
     print(f"Loading checkpoint from: {ckpt_path}")
-    chkpt = torch.load(ckpt_path, map_location="cpu")
+    chkpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     # Unwrap MedDINOv3 teacher format if present.
     if isinstance(chkpt, dict) and "teacher" in chkpt:
@@ -162,6 +173,17 @@ def main():
 
     torch.save(inflated_state_dict, out_path)
     print(f"\n[Ashwin_3d_inflation] Inflated checkpoint saved to: {out_path}")
+
+    patch_size = 16
+    print(f"\nToken count estimate for common 3d_fullres patch sizes (d_patch={args.d_patch}):")
+    for depth in [32, 40, 48, 64]:
+        for hw in [(192, 160), (224, 192)]:
+            h, w = hw
+            tokens = (depth // args.d_patch) * (h // patch_size) * (w // patch_size)
+            print(f"  patch ({depth:3d},{h},{w}): {tokens:5d} tokens  "
+                  f"({'OK' if tokens <= 400 else 'HIGH' if tokens <= 800 else 'VERY HIGH'})")
+    print(f"  Pretrained distribution: ~196 tokens")
+
     print(f"\nTo use for training:")
     print(f"  export MEDDINOV3_3D_CHECKPOINT={out_path}")
     print(f"  export MEDDINOV3_D_PATCH={args.d_patch}")
