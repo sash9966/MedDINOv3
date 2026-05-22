@@ -203,7 +203,6 @@ class dinov3Trainer(nnUNetTrainer):
                                                                    self.dataset_json)
 
             self.network = self.build_network_architecture(
-                self.configuration_manager.patch_size,
                 self.configuration_manager.network_arch_class_name,
                 self.configuration_manager.network_arch_init_kwargs,
                 self.configuration_manager.network_arch_init_kwargs_req_import,
@@ -1573,14 +1572,14 @@ class meddinov3_base_primus_multiscale_Trainer(dinov3_base_primus_Trainer):
         self.enable_deep_supervision = False
 
     @staticmethod
-    def build_network_architecture(patch_size: tuple, 
+    def build_network_architecture(
                                    architecture_class_name: str,
                                    arch_init_kwargs: dict,
                                    arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
                                    num_input_channels: int,
                                    num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> nn.Module:
-    
+
         import os
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base
 
@@ -1694,7 +1693,6 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
 
     @staticmethod
     def build_network_architecture(
-        patch_size: tuple,
         architecture_class_name: str,
         arch_init_kwargs: dict,
         arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
@@ -1706,16 +1704,7 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base_3d
         from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus import Primus_Multiscale3D
 
-        assert len(patch_size) == 3, (
-            "meddinov3_3d_primus_multiscale_Trainer requires a 3D patch_size "
-            f"(got {patch_size}). Use a 3d_fullres or 3d_lowres nnUNet configuration."
-        )
-
         d_patch = int(os.environ.get("MEDDINOV3_D_PATCH", "2"))
-        assert patch_size[0] % d_patch == 0, (
-            f"patch_size[0]={patch_size[0]} is not divisible by d_patch={d_patch}. "
-            "Adjust MEDDINOV3_D_PATCH or the nnUNet 3D configuration."
-        )
 
         # Load inflated checkpoint.
         ckpt_path = os.environ.get("MEDDINOV3_3D_CHECKPOINT", None)
@@ -1787,8 +1776,7 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
             model.depth_pos_embed.weight.zero_()
         print("[meddinov3_3d] depth_pos_embed zero-initialised")
 
-        n_tokens = (patch_size[0] // d_patch) * (patch_size[1] // 16) * (patch_size[2] // 16)
-        print(f"[meddinov3_3d] d_patch={d_patch}, patch_size={patch_size}, tokens={n_tokens}")
+        print(f"[meddinov3_3d] d_patch={d_patch}")
 
         primus = Primus_Multiscale3D(
             embed_dim=768,
@@ -1833,7 +1821,6 @@ class meddinov3_3d_ashwin_primus_multiscale_Trainer(meddinov3_3d_primus_multisca
 
     @staticmethod
     def build_network_architecture(
-        patch_size: tuple,
         architecture_class_name: str,
         arch_init_kwargs: dict,
         arch_init_kwargs_req_import,
@@ -1843,7 +1830,6 @@ class meddinov3_3d_ashwin_primus_multiscale_Trainer(meddinov3_3d_primus_multisca
     ) -> nn.Module:
         print("[Ashwin_3d_inflation] Building network with Ashwin-inflated checkpoint")
         return meddinov3_3d_primus_multiscale_Trainer.build_network_architecture(
-            patch_size=patch_size,
             architecture_class_name=architecture_class_name,
             arch_init_kwargs=arch_init_kwargs,
             arch_init_kwargs_req_import=arch_init_kwargs_req_import,
