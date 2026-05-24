@@ -591,14 +591,36 @@ class dinov3Trainer(nnUNetTrainer):
         # create dataset split
         tr_keys, val_keys = self.do_split()
 
-        # load the datasets for training and validation. Note that we always draw random samples so we really don't
-        # care about distributing training cases across GPUs.
-        dataset_tr = nnUNetDataset(self.preprocessed_dataset_folder, tr_keys,
-                                   folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
-                                   num_images_properties_loading_threshold=0)
-        dataset_val = nnUNetDataset(self.preprocessed_dataset_folder, val_keys,
-                                    folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
-                                    num_images_properties_loading_threshold=0)
+        # Auto-detect preprocessed format (.npz → nnUNetDatasetNumpy, .b2nd → nnUNetDatasetBlosc2).
+        # Both new classes return (data, seg, seg_prev, properties) — 4 values — but the data
+        # loaders (nnUNetDataLoaderBase.determine_shapes + generate_train_batch) expect the old
+        # 3-return interface (data, seg, properties) with seg_prev already stacked into seg.
+        # The adapter below normalises this without modifying the data loaders.
+        from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
+
+        DatasetClass = infer_dataset_class(self.preprocessed_dataset_folder)
+
+        def _wrap(inner_ds):
+            class _Compat:
+                def keys(self_):
+                    return inner_ds.identifiers
+                def load_case(self_, identifier):
+                    data, seg, seg_prev, props = inner_ds.load_case(identifier)
+                    data = np.asarray(data)
+                    seg  = np.asarray(seg)
+                    if seg_prev is not None:
+                        seg = np.vstack((seg, np.asarray(seg_prev)[None]))
+                    return data, seg, props
+            return _Compat()
+
+        dataset_tr = _wrap(DatasetClass(
+            self.preprocessed_dataset_folder,
+            identifiers=tr_keys,
+            folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage))
+        dataset_val = _wrap(DatasetClass(
+            self.preprocessed_dataset_folder,
+            identifiers=val_keys,
+            folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage))
         return dataset_tr, dataset_val
 
     def get_dataloaders(self):
