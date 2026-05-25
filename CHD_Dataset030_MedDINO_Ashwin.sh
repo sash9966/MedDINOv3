@@ -59,9 +59,10 @@ TRAINER_3D="meddinov3_3d_ashwin_primus_multiscale_Trainer"
 # d_patch controls how many CT slices are merged into one depth token.
 # Larger d_patch = fewer tokens, closer to the ViT's pretraining distribution (~196 tokens).
 #   d_patch=2  → ~2400 tokens  (12x over pretrained — too many, ViT cannot learn)
-#   d_patch=8  → ~600 tokens   (3x over pretrained  — recommended)
-#   d_patch=16 → ~300 tokens   (close to pretrained — use if still slow to converge)
-D_PATCH=8
+# Dataset030 3d_fullres patch_size = [96, 160, 160].  Token counts:
+#   d_patch=8  → (96/8)*(160/16)*(160/16) = 1200 tokens  (6.1x pretrained — too many)
+#   d_patch=16 → (96/16)*(160/16)*(160/16) =  600 tokens  (3.1x pretrained — recommended)
+D_PATCH=16
 
 REPO="/scratch/users/sastocke/MedDINOv3"
 SHARED_CKPT_DIR="/scratch/users/sastocke/meddinov3_checkpoints"
