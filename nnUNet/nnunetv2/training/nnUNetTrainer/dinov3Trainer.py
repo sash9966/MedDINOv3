@@ -1642,12 +1642,15 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
     The patch embedding is inflated from Conv2d to Conv3d. All other ViT weights
     are loaded unchanged. Three adaptations are applied for CECT CHD data:
 
-      1. depth_pos_embed is zero-initialised (not random) so the model starts in
-         the pretrained 2D feature space and learns depth context from data only.
+      1. depth_pos_embed is sinusoidal-initialised so the model has ordered depth
+         encoding from the first step. (Zero-init was previously used but made the
+         model depth-blind: same-position (h,w) tokens at different depths were
+         positionally identical to self-attention, so attention spread uniformly
+         across depth and no depth-sensitive features could be learned.)
 
       2. Differential learning rates: decoder runs at initial_lr, the pretrained
          backbone runs at initial_lr * BACKBONE_LR_SCALE (default 0.05), and
-         depth_pos_embed runs at initial_lr * 0.5 (newly initialised, needs to learn).
+         depth_pos_embed runs at initial_lr * 0.5.
 
       3. Use centering inflation (--inflation centering) when regenerating the
          checkpoint for better through-plane context learning.
@@ -1668,6 +1671,29 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         self.num_epochs = 200
+
+    def initialize(self):
+        super().initialize()
+        import os
+        patch_size = self.configuration_manager.patch_size
+        d_patch = int(os.environ.get("MEDDINOV3_D_PATCH", "2"))
+        if len(patch_size) == 3:
+            D, H, W = patch_size
+            n_tokens = (D // d_patch) * (H // 16) * (W // 16)
+            pretrain_tokens = 196
+            ratio = n_tokens / pretrain_tokens
+            warn = "  *** HIGH — attention OOD" if ratio > 4 else ("  ** elevated" if ratio > 2 else "  OK")
+            print(
+                f"\n[meddinov3_3d] === 3D ViT token budget =========================\n"
+                f"  patch_size   : {patch_size}\n"
+                f"  d_patch      : {d_patch}\n"
+                f"  depth tokens : {D} // {d_patch} = {D // d_patch}\n"
+                f"  H tokens     : {H} // 16 = {H // 16}\n"
+                f"  W tokens     : {W} // 16 = {W // 16}\n"
+                f"  total tokens : {n_tokens}  (pretrained: {pretrain_tokens},  ratio: {ratio:.1f}x){warn}\n"
+                f"  If ratio > 4, increase MEDDINOV3_D_PATCH to reduce token count.\n"
+                f"[meddinov3_3d] =======================================================\n"
+            )
 
     def configure_optimizers(self):
         import os
@@ -1791,12 +1817,28 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         assert not unexpected, f"Unexpected keys when loading 3D checkpoint: {unexpected}"
         assert not truly_missing, f"Missing keys when loading 3D checkpoint: {truly_missing}"
 
-        # Zero-init depth_pos_embed so the model starts in the pretrained 2D feature
-        # space. Random init (trunc_normal std=0.02) adds ~0.5 magnitude noise per token
-        # which partially corrupts pretrained features from the first step.
+        # Sinusoidal depth positional embedding.
+        # Zero-init was previously used here but it makes the model depth-blind: all tokens at
+        # the same (h,w) but different depth positions receive identical positional encoding
+        # (depth_pos_embed=0 AND RoPE is tiled identically per (h,w)), so self-attention
+        # cannot distinguish depth at all and spreads weight uniformly across the depth
+        # dimension from epoch 0.  Sinusoidal init gives smooth, ordered depth encoding
+        # at no learned cost and lets the backbone orient itself in depth immediately.
+        import math as _math
         with torch.no_grad():
-            model.depth_pos_embed.weight.zero_()
-        print("[meddinov3_3d] depth_pos_embed zero-initialised")
+            n_depth_slots = model.depth_pos_embed.weight.shape[0]
+            d_emb = model.depth_pos_embed.weight.shape[1]
+            pos = torch.arange(n_depth_slots, dtype=torch.float32).unsqueeze(1)
+            div = torch.exp(
+                torch.arange(0, d_emb, 2, dtype=torch.float32)
+                * (-_math.log(10000.0) / d_emb)
+            )
+            pe = torch.zeros(n_depth_slots, d_emb)
+            pe[:, 0::2] = torch.sin(pos * div)
+            pe[:, 1::2] = torch.cos(pos * div[:d_emb // 2])
+            model.depth_pos_embed.weight.copy_(pe)
+        print("[meddinov3_3d] depth_pos_embed sinusoidal-initialised "
+              f"(shape {tuple(model.depth_pos_embed.weight.shape)})")
 
         print(f"[meddinov3_3d] d_patch={d_patch}")
 
