@@ -548,13 +548,16 @@ class dinov3Trainer(nnUNetTrainer):
             val_keys = tr_keys
         else:
             splits_file = join(self.preprocessed_dataset_folder_base, "splits_final.json")
-            dataset = nnUNetDataset(self.preprocessed_dataset_folder, case_identifiers=None,
-                                    num_images_properties_loading_threshold=0,
-                                    folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
+            from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class as _infer_split_ds
+            _SplitDatasetClass = _infer_split_ds(self.preprocessed_dataset_folder)
+            dataset = _SplitDatasetClass(self.preprocessed_dataset_folder, case_identifiers=None,
+                                         num_images_properties_loading_threshold=0,
+                                         folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
+            _ds_keys = list(dataset.identifiers) if hasattr(dataset, 'identifiers') else list(dataset.keys())
             # if the split file does not exist we need to create it
             if not isfile(splits_file):
                 self.print_to_log_file("Creating new 5-fold cross-validation split...")
-                all_keys_sorted = list(np.sort(list(dataset.keys())))
+                all_keys_sorted = list(np.sort(_ds_keys))
                 splits = generate_crossval_split(all_keys_sorted, seed=12345, n_splits=5)
                 save_json(splits, splits_file)
 
@@ -575,7 +578,7 @@ class dinov3Trainer(nnUNetTrainer):
                                        "random (but seeded) 80:20 split!" % (self.fold, len(splits)))
                 # if we request a fold that is not in the split file, create a random 80:20 split
                 rnd = np.random.RandomState(seed=12345 + self.fold)
-                keys = np.sort(list(dataset.keys()))
+                keys = np.sort(_ds_keys)
                 idx_tr = rnd.choice(len(keys), int(len(keys) * 0.8), replace=False)
                 idx_val = [i for i in range(len(keys)) if i not in idx_tr]
                 tr_keys = [keys[i] for i in idx_tr]
@@ -1211,7 +1214,12 @@ class dinov3Trainer(nnUNetTrainer):
                 self.network._orig_mod.load_state_dict(new_state_dict)
             else:
                 self.network.load_state_dict(new_state_dict)
-        self.optimizer.load_state_dict(checkpoint['optimizer_state'])
+        try:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state'])
+        except ValueError as _e:
+            print(f"[dinov3] WARNING: optimizer state not restored ({_e}). "
+                  f"This is expected when param groups changed (e.g. patch_embed_3d added). "
+                  f"Training will continue from network weights only.")
         if self.grad_scaler is not None:
             if checkpoint['grad_scaler_state'] is not None:
                 self.grad_scaler.load_state_dict(checkpoint['grad_scaler_state'])
@@ -1252,9 +1260,27 @@ class dinov3Trainer(nnUNetTrainer):
                 # we cannot just have barriers all over the place because the number of keys each GPU receives can be
                 # different
 
-            dataset_val = nnUNetDataset(self.preprocessed_dataset_folder, val_keys,
-                                        folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
-                                        num_images_properties_loading_threshold=0)
+            from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class as _infer_ds
+            _DatasetClass = _infer_ds(self.preprocessed_dataset_folder)
+            _raw_val = _DatasetClass(self.preprocessed_dataset_folder, val_keys,
+                                     folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                                     num_images_properties_loading_threshold=0)
+
+            class _ValCompat:
+                def keys(self_):
+                    return _raw_val.identifiers
+                def load_case(self_, identifier):
+                    result = _raw_val.load_case(identifier)
+                    if len(result) == 4:
+                        data, seg, seg_prev, props = result
+                        data = np.asarray(data)
+                        seg  = np.asarray(seg)
+                        if seg_prev is not None:
+                            seg = np.vstack((seg, np.asarray(seg_prev)[None]))
+                        return data, seg, props
+                    return result
+
+            dataset_val = _ValCompat()
 
             next_stages = self.configuration_manager.next_stage_names
 
@@ -1701,19 +1727,23 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         net = self.network
 
         encoder = net.dino_encoder
-        depth_pe_ids = {id(p) for p in encoder.depth_pos_embed.parameters()}
-        backbone_params = [p for p in encoder.parameters() if id(p) not in depth_pe_ids]
-        depth_pe_params = list(encoder.depth_pos_embed.parameters())
+        depth_pe_ids   = {id(p) for p in encoder.depth_pos_embed.parameters()}
+        patch_embed_ids = {id(p) for p in encoder.patch_embed.parameters()}
+        backbone_params = [p for p in encoder.parameters()
+                           if id(p) not in depth_pe_ids and id(p) not in patch_embed_ids]
+        depth_pe_params    = list(encoder.depth_pos_embed.parameters())
+        patch_embed_params = list(encoder.patch_embed.parameters())
         adapter_params  = list(net.input_adapter.parameters()) if net.input_adapter is not None else []
         decoder_params  = list(net.up_projection.parameters()) + adapter_params
 
         lr = self.initial_lr
         param_groups = [
-            {'params': decoder_params,  'lr': lr,                   'initial_lr': lr,                   'name': 'decoder'},
-            {'params': depth_pe_params, 'lr': lr * 0.5,             'initial_lr': lr * 0.5,             'name': 'depth_pos_embed'},
-            {'params': backbone_params, 'lr': lr * backbone_lr_scale, 'initial_lr': lr * backbone_lr_scale, 'name': 'backbone'},
+            {'params': decoder_params,      'lr': lr,                     'initial_lr': lr,                     'name': 'decoder'},
+            {'params': patch_embed_params,  'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'name': 'patch_embed_3d'},
+            {'params': depth_pe_params,     'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'name': 'depth_pos_embed'},
+            {'params': backbone_params,     'lr': lr * backbone_lr_scale, 'initial_lr': lr * backbone_lr_scale, 'name': 'backbone'},
         ]
-        print(f'[meddinov3_3d] LR — decoder={lr:.2e}  depth_pe={lr*0.5:.2e}  backbone={lr*backbone_lr_scale:.2e}')
+        print(f'[meddinov3_3d] LR — decoder={lr:.2e}  patch_embed_3d={lr*0.5:.2e}  depth_pe={lr*0.5:.2e}  backbone={lr*backbone_lr_scale:.2e}')
 
         optimizer = torch.optim.SGD(param_groups, momentum=0.99, nesterov=True,
                                     weight_decay=self.weight_decay)
