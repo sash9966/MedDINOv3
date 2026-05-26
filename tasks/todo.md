@@ -27,7 +27,7 @@
 - [x] D: Write `verify_inflation.py` at repo root
       Gate: `python3 verify_inflation.py --help` runs without import errors
 
-- [ ] Dashboard: Add "MedDINOv3 3D centering d=8 AdamW" experiment row + Ashwin /d_patch bug entry
+- [x] Dashboard: Add "MedDINOv3 3D centering d=8 AdamW" experiment row + Ashwin /d_patch bug entry
       File: `dashboard.html`
 
 - [ ] Smoke test on server (fold 0, 5–10 epochs):
