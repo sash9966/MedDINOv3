@@ -1696,7 +1696,8 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
-        self.num_epochs = 200
+        import os as _os
+        self.num_epochs = int(_os.environ.get("MEDDINOV3_NUM_EPOCHS", "200"))
 
     def initialize(self):
         super().initialize()
@@ -1723,11 +1724,12 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
 
     def configure_optimizers(self):
         import os
-        backbone_lr_scale = float(os.environ.get("MEDDINOV3_BACKBONE_LR_SCALE", "0.05"))
+        # 0.3 ≈ 9e-5 effective backbone LR — 0.05 was too conservative, especially under SGD
+        backbone_lr_scale = float(os.environ.get("MEDDINOV3_BACKBONE_LR_SCALE", "0.3"))
         net = self.network
 
         encoder = net.dino_encoder
-        depth_pe_ids   = {id(p) for p in encoder.depth_pos_embed.parameters()}
+        depth_pe_ids    = {id(p) for p in encoder.depth_pos_embed.parameters()}
         patch_embed_ids = {id(p) for p in encoder.patch_embed.parameters()}
         backbone_params = [p for p in encoder.parameters()
                            if id(p) not in depth_pe_ids and id(p) not in patch_embed_ids]
@@ -1737,24 +1739,29 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         decoder_params  = list(net.up_projection.parameters()) + adapter_params
 
         lr = self.initial_lr
+        wd = self.weight_decay
         param_groups = [
-            {'params': decoder_params,      'lr': lr,                     'initial_lr': lr,                     'name': 'decoder'},
-            {'params': patch_embed_params,  'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'name': 'patch_embed_3d'},
-            {'params': depth_pe_params,     'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'name': 'depth_pos_embed'},
-            {'params': backbone_params,     'lr': lr * backbone_lr_scale, 'initial_lr': lr * backbone_lr_scale, 'name': 'backbone'},
+            {'params': decoder_params,      'lr': lr,                     'initial_lr': lr,                     'weight_decay': wd,  'name': 'decoder'},
+            {'params': patch_embed_params,  'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'weight_decay': wd,  'name': 'patch_embed_3d'},
+            {'params': depth_pe_params,     'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'weight_decay': 0.0, 'name': 'depth_pos_embed'},
+            {'params': backbone_params,     'lr': lr * backbone_lr_scale, 'initial_lr': lr * backbone_lr_scale, 'weight_decay': wd,  'name': 'backbone'},
         ]
-        print(f'[meddinov3_3d] LR — decoder={lr:.2e}  patch_embed_3d={lr*0.5:.2e}  depth_pe={lr*0.5:.2e}  backbone={lr*backbone_lr_scale:.2e}')
+        print(
+            f'[meddinov3_3d] LR — decoder={lr:.2e}  patch_embed_3d={lr*0.5:.2e}  '
+            f'depth_pe={lr*0.5:.2e}  backbone={lr*backbone_lr_scale:.2e}  '
+            f'(AdamW betas=(0.9,0.98), warmup=10ep)'
+        )
 
-        optimizer = torch.optim.SGD(param_groups, momentum=0.99, nesterov=True,
-                                    weight_decay=self.weight_decay)
+        optimizer = torch.optim.AdamW(param_groups, betas=(0.9, 0.98))
 
-        max_steps = self.num_epochs
-        exponent  = 0.9
+        max_steps    = self.num_epochs
+        warmup_epochs = 10
+        exponent     = 0.9
 
         class _PolyLRPerGroup:
-            """Plain poly-LR with per-group initial_lr. Not a PyTorch _LRScheduler
-            subclass — avoids 'step before optimizer' and epoch-arg deprecation warnings
-            that fire because nnUNet calls lr_scheduler.step(current_epoch)."""
+            """Poly-LR with per-group initial_lr and linear warmup.
+            Not a PyTorch _LRScheduler subclass — avoids epoch-arg deprecation
+            warnings that fire because nnUNet calls lr_scheduler.step(current_epoch)."""
             def __init__(self, opt):
                 self.optimizer = opt
                 self.ctr = 0
@@ -1762,9 +1769,16 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
                 if current_step is None or current_step == -1:
                     current_step = self.ctr
                     self.ctr += 1
-                scale = (1 - current_step / max_steps) ** exponent
                 for pg in self.optimizer.param_groups:
-                    pg['lr'] = pg.get('initial_lr', lr) * scale
+                    init_lr = pg.get('initial_lr', lr)
+                    if current_step < warmup_epochs:
+                        # linear warmup from 1e-6 to initial_lr
+                        scale = 1e-6 / init_lr + (1.0 - 1e-6 / init_lr) * current_step / warmup_epochs
+                    else:
+                        remaining = max_steps - warmup_epochs
+                        step_in_decay = current_step - warmup_epochs
+                        scale = (1 - step_in_decay / remaining) ** exponent
+                    pg['lr'] = init_lr * max(scale, 0.0)
 
         lr_scheduler = _PolyLRPerGroup(optimizer)
         return optimizer, lr_scheduler
