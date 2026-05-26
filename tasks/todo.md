@@ -21,10 +21,10 @@
       File: `nnUNet/nnunetv2/training/nnUNetTrainer/dinov3Trainer.py`
       Gate: syntax check passes
 
-- [ ] C: Write `CHD_Dataset030_MedDINO_Centering_d8.sh` (D_PATCH=8, centering, 500 epochs)
+- [x] C: Write `CHD_Dataset030_MedDINO_Centering_d8.sh` (D_PATCH=8, centering, 500 epochs)
       Gate: shellcheck passes (or no syntax errors visible)
 
-- [ ] D: Write `verify_inflation.py` at repo root
+- [x] D: Write `verify_inflation.py` at repo root
       Gate: `python3 verify_inflation.py --help` runs without import errors
 
 - [ ] Dashboard: Add "MedDINOv3 3D centering d=8 AdamW" experiment row + Ashwin /d_patch bug entry
