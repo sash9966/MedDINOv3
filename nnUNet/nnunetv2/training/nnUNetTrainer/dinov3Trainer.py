@@ -183,6 +183,9 @@ class dinov3Trainer(nnUNetTrainer):
         self.save_every = 50
         self.disable_checkpointing = False
 
+        ### gradient clipping (subclasses may override; ViT+AdamW wants ~1.0)
+        self.grad_clip_norm = 12.0
+
         ## DDP batch size and oversampling can differ between workers and needs adaptation
         # we need to change the batch size in DDP because we don't use any of those distributed samplers
         self._set_batch_size_and_oversample()
@@ -1003,12 +1006,12 @@ class dinov3Trainer(nnUNetTrainer):
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
             self.grad_scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.grad_clip_norm)
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
         else:
             l.backward()
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.grad_clip_norm)
             self.optimizer.step()
         return {'loss': l.detach().cpu().numpy()}
 
@@ -1698,6 +1701,8 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         import os as _os
         self.num_epochs = int(_os.environ.get("MEDDINOV3_NUM_EPOCHS", "200"))
+        # AdamW on a ViT needs a much tighter grad clip than the SGD-era default of 12.
+        self.grad_clip_norm = 1.0
 
     def initialize(self):
         super().initialize()
@@ -1724,8 +1729,9 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
 
     def configure_optimizers(self):
         import os
-        # 0.3 ≈ 9e-5 effective backbone LR — 0.05 was too conservative, especially under SGD
-        backbone_lr_scale = float(os.environ.get("MEDDINOV3_BACKBONE_LR_SCALE", "0.3"))
+        # 0.1 ≈ 3e-5 effective backbone LR — typical ViT fine-tune range (1e-5 to 5e-5).
+        # 0.3 destabilised the inflated patch_embed during the early decoder-warmup phase.
+        backbone_lr_scale = float(os.environ.get("MEDDINOV3_BACKBONE_LR_SCALE", "0.1"))
         net = self.network
 
         encoder = net.dino_encoder
@@ -1740,16 +1746,18 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
 
         lr = self.initial_lr
         wd = self.weight_decay
+        # patch_embed_3d wd=0: weight decay erodes the inflated pretrained kernel
+        # (and for centering inflation, decays the non-centre slices away from 0).
         param_groups = [
             {'params': decoder_params,      'lr': lr,                     'initial_lr': lr,                     'weight_decay': wd,  'name': 'decoder'},
-            {'params': patch_embed_params,  'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'weight_decay': wd,  'name': 'patch_embed_3d'},
+            {'params': patch_embed_params,  'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'weight_decay': 0.0, 'name': 'patch_embed_3d'},
             {'params': depth_pe_params,     'lr': lr * 0.5,               'initial_lr': lr * 0.5,               'weight_decay': 0.0, 'name': 'depth_pos_embed'},
             {'params': backbone_params,     'lr': lr * backbone_lr_scale, 'initial_lr': lr * backbone_lr_scale, 'weight_decay': wd,  'name': 'backbone'},
         ]
         print(
-            f'[meddinov3_3d] LR — decoder={lr:.2e}  patch_embed_3d={lr*0.5:.2e}  '
-            f'depth_pe={lr*0.5:.2e}  backbone={lr*backbone_lr_scale:.2e}  '
-            f'(AdamW betas=(0.9,0.98), warmup=10ep)'
+            f'[meddinov3_3d] LR — decoder={lr:.2e}  patch_embed_3d={lr*0.5:.2e} (wd=0)  '
+            f'depth_pe={lr*0.5:.2e} (wd=0)  backbone={lr*backbone_lr_scale:.2e}  '
+            f'(AdamW betas=(0.9,0.98), warmup=10ep, clip={self.grad_clip_norm})'
         )
 
         optimizer = torch.optim.AdamW(param_groups, betas=(0.9, 0.98))

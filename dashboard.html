@@ -220,11 +220,13 @@ Input (B, 1, D, H, W)
 <div class="card">
   <h3>3D training interventions (all 3D trainers)</h3>
   <table style="margin-top:8px">
-    <tr><td style="color:var(--muted);width:220px">zero-init depth_pos_embed</td><td>Prevents random spatial noise corrupting pretrained 2D features on step 0</td></tr>
+    <tr><td style="color:var(--muted);width:220px">sinusoidal depth_pos_embed</td><td>Ordered depth encoding from step 0 (zero-init left model depth-blind: identical positional code at every depth slice)</td></tr>
     <tr><td style="color:var(--muted)">Optimizer</td><td>AdamW betas=(0.9,0.98); 10-epoch linear warmup then poly decay. (Prior: SGD — caused plateau at 0.15 Dice.)</td></tr>
-    <tr><td style="color:var(--muted)">Differential LRs</td><td>decoder ×1.0 · patch_embed_3d ×0.5 · depth_pos_embed ×0.5 (wd=0) · backbone ×BACKBONE_LR_SCALE (default 0.3)</td></tr>
+    <tr><td style="color:var(--muted)">grad_clip_norm</td><td><b>1.0</b> on 3D trainers (was 12, the SGD-era default — effectively no clipping for AdamW). Set via <code>self.grad_clip_norm</code>.</td></tr>
+    <tr><td style="color:var(--muted)">Differential LRs</td><td>decoder ×1.0 · patch_embed_3d ×0.5 (wd=0) · depth_pos_embed ×0.5 (wd=0) · backbone ×BACKBONE_LR_SCALE (default <b>0.1</b>, was 0.3)</td></tr>
+    <tr><td style="color:var(--muted)">patch_embed_3d wd=0</td><td>Prevents the inflated pretrained kernel from decaying; for centering init this also keeps the non-centre slices near zero</td></tr>
     <tr><td style="color:var(--muted)">Per-group PolyLR</td><td>Each param group decays from its own initial_lr, not a shared value</td></tr>
-    <tr><td style="color:var(--muted)">d_patch=8 rationale</td><td>Finer depth resolution (8 slices/token vs 16) with centering inflation; activation-preserving init tolerates higher token OOD ratio better than Ashwin</td></tr>
+    <tr><td style="color:var(--muted)">d_patch choice</td><td><b>d=16</b> = 600 tok (3.1× pretrained) — safe baseline. d=8 = 1200 tok (6.1×) — push only after d=16 converges.</td></tr>
   </table>
 </div>
 </section>
@@ -400,7 +402,8 @@ let experiments = JSON.parse(localStorage.getItem(EXP_KEY)||'null') || [
   {tag:'baseline-2d-d030', dataset:'030', config:'2d', trainer:'meddinov3_base_primus_multiscale_Trainer', inflation:'—', status:'queued', notes:'Target: ~0.88 Dice (matches other datasets)'},
   {tag:'3d-centering-d16-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=16', status:'queued', notes:'600 tok (3.1×); SGD run plateaued 0.15 — AdamW fix pending'},
   {tag:'3d-ashwin-d16-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_ashwin_primus_multiscale_Trainer', inflation:'Ashwin d=16', status:'queued', notes:'600 tok; Ashwin missing /d_patch → act scale 16× bug (documented)'},
-  {tag:'3d-centering-d8-AdamW-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=8', status:'queued', notes:'1200 tok (6.1×); 500ep, AdamW, backbone_lr=0.3 — primary new run'},
+  {tag:'3d-centering-d16-AdamW-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=16', status:'queued', notes:'600 tok (3.1×); 500ep, AdamW, clip=1.0, backbone_lr=0.1, patch_embed wd=0 — SAFE BASELINE, run this first'},
+  {tag:'3d-centering-d8-AdamW-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=8', status:'queued', notes:'1200 tok (6.1×); 500ep, AdamW, clip=1.0, backbone_lr=0.1, patch_embed wd=0 — push only after d=16 converges'},
 ];
 
 function saveExp(){ localStorage.setItem(EXP_KEY, JSON.stringify(experiments)); }
@@ -489,6 +492,7 @@ let bugs=JSON.parse(localStorage.getItem(BUG_KEY)||'null')||[
   {text:'PolyLRScheduler overwrote all param groups with same LR (ignored initial_lr per group)', status:'resolved', date:'2026-05-18'},
   {text:'3D trainer used SGD(momentum=0.99) instead of AdamW — ViTs do not converge with SGD+high WD; fixed in commit e7e5fcb', status:'resolved', date:'2026-05-26'},
   {text:'Ashwin inflate_weights_3d_ashwin.py: depth expansion has no /d_patch normalisation → Conv3d output scaled d_patch× vs 2D pretrained activations at first LayerNorm. Kept as comparison baseline; centering inflation is activation-preserving.', status:'open', date:'2026-05-26'},
+  {text:'3D trainer regressions blocking 0.15 Dice plateau — three fixes landed together: (1) grad_clip_norm 12 → 1.0 (AdamW-appropriate), (2) patch_embed_3d weight_decay 5e-2 → 0 (do not decay inflated pretrained kernel), (3) MEDDINOV3_BACKBONE_LR_SCALE default 0.3 → 0.1 (typical ViT FT range).', status:'resolved', date:'2026-05-27'},
 ];
 function saveBugs(){ localStorage.setItem(BUG_KEY, JSON.stringify(bugs)); }
 function renderBugs(){
