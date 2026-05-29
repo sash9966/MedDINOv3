@@ -217,6 +217,43 @@ else
 fi
 
 # ─────────────────────────────────────────────
+# Phase 3.5 — Pre-unpack dataset (shared, locked)
+# ─────────────────────────────────────────────
+UNPACK_LOCK="${SHARED_CKPT_DIR}/unpack_D${DATASET_ID}.lock"
+for _CFG in "${CONFIG_2D}" "${CONFIG_3D}"; do
+    KEY="unpack_D${DATASET_ID}_${_CFG}"
+    if is_shared_done "${KEY}"; then
+        echo "[SKIP] Phase 3.5: ${_CFG} already unpacked"
+    else
+        echo "================================================================"
+        echo "Phase 3.5: Pre-unpack ${_CFG} (flock-protected)"
+        echo "================================================================"
+        (
+            flock -x 9
+            if ! is_shared_done "${KEY}"; then
+                cat > /tmp/c8_unpack.py << 'PYEOF'
+import sys, os
+sys.path.insert(0, os.environ.get('PYTHONPATH', '').split(':')[0])
+from nnunetv2.training.dataloading.utils import unpack_dataset
+folder = sys.argv[1]
+print(f"Unpacking: {folder}")
+unpack_dataset(folder, unpack_segmentation=True, overwrite_existing=False, num_processes=4, verify_npy=True)
+print("Done.")
+PYEOF
+                _PREP_FOLDER="${nnUNet_preprocessed}/${DATASET_NAME}"
+                if [[ "${_CFG}" == "2d" ]]; then
+                    _DATA_ID="nnUNetPlans_2d"
+                else
+                    _DATA_ID="nnUNetPlans_3d_fullres"
+                fi
+                python3 /tmp/c8_unpack.py "${_PREP_FOLDER}/${_DATA_ID}"
+                mark_shared_done "${KEY}"
+            fi
+        ) 9>"${UNPACK_LOCK}_${_CFG}"
+    fi
+done
+
+# ─────────────────────────────────────────────
 # Phase 4 — MedDINOv3 2D training (fold 0)
 # Shared marker — skip if CHD_Dataset030_MedDINO.sh already ran it.
 # ─────────────────────────────────────────────
