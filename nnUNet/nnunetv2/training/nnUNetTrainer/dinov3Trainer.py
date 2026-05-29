@@ -553,9 +553,23 @@ class dinov3Trainer(nnUNetTrainer):
             splits_file = join(self.preprocessed_dataset_folder_base, "splits_final.json")
             from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class as _infer_split_ds
             _SplitDatasetClass = _infer_split_ds(self.preprocessed_dataset_folder)
-            dataset = _SplitDatasetClass(self.preprocessed_dataset_folder, case_identifiers=None,
-                                         num_images_properties_loading_threshold=0,
-                                         folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
+            # nnUNetBaseDataset subclasses (Blosc2, Numpy) use 'identifiers=';
+            # the legacy nnUNetDataset uses 'case_identifiers=' + num_images_properties_loading_threshold.
+            import inspect as _inspect
+            _init_params = set(_inspect.signature(_SplitDatasetClass.__init__).parameters)
+            if 'identifiers' in _init_params:
+                dataset = _SplitDatasetClass(
+                    self.preprocessed_dataset_folder,
+                    identifiers=None,
+                    folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                )
+            else:
+                dataset = _SplitDatasetClass(
+                    self.preprocessed_dataset_folder,
+                    case_identifiers=None,
+                    num_images_properties_loading_threshold=0,
+                    folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                )
             _ds_keys = list(dataset.identifiers) if hasattr(dataset, 'identifiers') else list(dataset.keys())
             # if the split file does not exist we need to create it
             if not isfile(splits_file):
@@ -1264,10 +1278,22 @@ class dinov3Trainer(nnUNetTrainer):
                 # different
 
             from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class as _infer_ds
+            import inspect as _inspect2
             _DatasetClass = _infer_ds(self.preprocessed_dataset_folder)
-            _raw_val = _DatasetClass(self.preprocessed_dataset_folder, val_keys,
-                                     folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
-                                     num_images_properties_loading_threshold=0)
+            _init_params2 = set(_inspect2.signature(_DatasetClass.__init__).parameters)
+            if 'identifiers' in _init_params2:
+                _raw_val = _DatasetClass(
+                    self.preprocessed_dataset_folder,
+                    identifiers=val_keys,
+                    folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                )
+            else:
+                _raw_val = _DatasetClass(
+                    self.preprocessed_dataset_folder,
+                    val_keys,
+                    folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                    num_images_properties_loading_threshold=0,
+                )
 
             class _ValCompat:
                 def keys(self_):
@@ -1339,8 +1365,15 @@ class dinov3Trainer(nnUNetTrainer):
 
                         try:
                             # we do this so that we can use load_case and do not have to hard code how loading training cases is implemented
-                            tmp = nnUNetDataset(expected_preprocessed_folder, [k],
-                                                num_images_properties_loading_threshold=0)
+                            from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class as _infer_cascade
+                            import inspect as _inspect3
+                            _CascadeDS = _infer_cascade(expected_preprocessed_folder)
+                            _cascade_params = set(_inspect3.signature(_CascadeDS.__init__).parameters)
+                            if 'identifiers' in _cascade_params:
+                                tmp = _CascadeDS(expected_preprocessed_folder, identifiers=[k])
+                            else:
+                                tmp = _CascadeDS(expected_preprocessed_folder, [k],
+                                                 num_images_properties_loading_threshold=0)
                             d, s, p = tmp.load_case(k)
                         except FileNotFoundError:
                             self.print_to_log_file(
