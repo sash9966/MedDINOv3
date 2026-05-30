@@ -5,18 +5,24 @@ primitives (torch-only; no dynamic_network_architectures needed).
 Run:  python3 tools/test_chd_conditioning.py
 """
 
+import importlib.util
 import os
-import sys
 
 import torch
 
+# chd_conditioning depends only on torch, so load it directly by file path —
+# avoids importing the dinov3 package tree (which needs server-only deps).
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "nnUNet"))
-
-from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.chd_conditioning import (
-    DiagnosisConditioner,
-    FiLM3D,
+_REPO = os.path.dirname(_HERE)
+_MOD_PATH = os.path.join(
+    _REPO, "nnUNet", "nnunetv2", "training", "nnUNetTrainer",
+    "dinov3", "dinov3", "models", "chd_conditioning.py",
 )
+_spec = importlib.util.spec_from_file_location("chd_conditioning", _MOD_PATH)
+_cc = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_cc)
+DiagnosisConditioner = _cc.DiagnosisConditioner
+FiLM3D = _cc.FiLM3D
 
 
 def test_film_identity_at_init():
