@@ -42,6 +42,12 @@ from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus_chd import (
 
 class meddinov3_3d_chd_film_d8_Trainer(meddinov3_3d_centering_d8_primus_multiscale_Trainer):
 
+    def _do_i_compile(self):
+        # The diagnosis reaches forward() through a mutable attribute
+        # (_pending_diagnosis), changed every step/case. Disable torch.compile so
+        # dynamo cannot bake or guard it stale; correctness > a little speed here.
+        return False
+
     # ------------------------------------------------------------------ network
     @staticmethod
     def build_network_architecture(
@@ -201,12 +207,46 @@ class meddinov3_3d_chd_film_d8_Trainer(meddinov3_3d_centering_d8_primus_multisca
         return super().validation_step(batch)
 
     def perform_actual_validation(self, save_probabilities: bool = False):
-        # NOTE: end-of-training sliding-window validation currently runs through the
-        # base nnUNetPredictor, which calls network(x) with no diagnosis -> the
-        # network falls back to the zero/UNK vector (UNCONDITIONED). Conditioned
-        # test inference is done separately via nnUNetPredictorCHD
-        # (predict_from_raw_data_chd.py), which reads each case's diagnosis_vec.
-        # Tracked as a follow-up; the training pseudo-Dice curve is conditioned.
-        print("[chd_film] WARNING: perform_actual_validation runs UNCONDITIONED "
-              "(zero diagnosis). Use the CHD inference path for conditioned metrics.")
-        return super().perform_actual_validation(save_probabilities)
+        # Conditioned end-of-training validation WITHOUT copying the long parent
+        # method. The parent loops over val cases single-threaded, calling
+        # dataset_val.load_case(k) immediately before
+        # predictor.predict_sliding_window_return_logits(data) for that same case.
+        # The dataset class is obtained via infer_dataset_class, which the parent
+        # re-imports at call time. So we temporarily patch infer_dataset_class to
+        # return a subclass whose load_case ALSO stashes that case's diagnosis on
+        # the network (_pending_diagnosis). The base predictor then calls
+        # network(x) with no diagnosis kwarg and the network uses the stashed
+        # vector -> correct per-case conditioning. A [1, num_diag] vector
+        # broadcasts over any tile-batch in the FiLM modulation.
+        import torch as _torch
+        import nnunetv2.training.dataloading.nnunet_dataset as _ds_mod
+
+        net = getattr(self.network, "_orig_mod", self.network)
+        orig_infer = _ds_mod.infer_dataset_class
+
+        def _patched_infer(folder):
+            base_cls = orig_infer(folder)
+
+            class _DiagDataset(base_cls):
+                def load_case(self_inner, identifier):
+                    out = super().load_case(identifier)
+                    props = out[-1]  # properties is the last element of the tuple
+                    vec = props.get("diagnosis_vec") if isinstance(props, dict) else None
+                    if vec is not None:
+                        net.set_diagnosis(
+                            _torch.as_tensor(vec, dtype=_torch.float32).unsqueeze(0)
+                        )
+                    else:
+                        net.set_diagnosis(None)
+                    return out
+
+            return _DiagDataset
+
+        _ds_mod.infer_dataset_class = _patched_infer
+        try:
+            print("[chd_film] perform_actual_validation: per-case diagnosis "
+                  "conditioning active (via load_case hook)")
+            return super().perform_actual_validation(save_probabilities)
+        finally:
+            _ds_mod.infer_dataset_class = orig_infer
+            net.set_diagnosis(None)
