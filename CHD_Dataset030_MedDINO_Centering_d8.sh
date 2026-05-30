@@ -6,7 +6,7 @@
 #  Experiments (fold 0):
 #    1. MedDINOv3 2D  (meddinov3_base_primus_multiscale_Trainer, 2d)
 #       Shared with CHD_Dataset030_MedDINO.sh — skipped if already done.
-#    2. MedDINOv3 3D centering d=8  (meddinov3_3d_primus_multiscale_Trainer, 3d_fullres)
+#    2. MedDINOv3 3D centering d=8  (meddinov3_3d_centering_d8_primus_multiscale_Trainer, 3d_fullres)
 #       Inflation: centering (activation-preserving; 2D weights on centre slice).
 #       d_patch=8  → (96/8)*(160/16)*(160/16) = 1200 tokens (6.1x pretrained).
 #       Token budget will print *** HIGH — intentional experiment testing whether
@@ -60,7 +60,7 @@ DATASET_NAME="Dataset030_imageCHD_HU"
 CONFIG_2D="2d"
 CONFIG_3D="3d_fullres"
 TRAINER_2D="meddinov3_base_primus_multiscale_Trainer"
-TRAINER_3D="meddinov3_3d_primus_multiscale_Trainer"
+TRAINER_3D="meddinov3_3d_centering_d8_primus_multiscale_Trainer"
 
 # d_patch=8: finer depth resolution vs. d_patch=16 (activation-preserving centering
 # can tolerate the higher token count better than Ashwin).

@@ -22,7 +22,7 @@
 #  Experiments (fold 0):
 #    1. MedDINOv3 2D  (meddinov3_base_primus_multiscale_Trainer, 2d)
 #       Shared with other CHD_Dataset030_MedDINO*.sh — skipped if already done.
-#    2. MedDINOv3 3D centering d=16  (meddinov3_3d_primus_multiscale_Trainer)
+#    2. MedDINOv3 3D centering d=16  (meddinov3_3d_centering_d16_primus_multiscale_Trainer)
 #
 #  RESUME SUPPORT
 #    Resubmit the same script to continue from where it stopped.
@@ -69,7 +69,7 @@ DATASET_NAME="Dataset030_imageCHD_HU"
 CONFIG_2D="2d"
 CONFIG_3D="3d_fullres"
 TRAINER_2D="meddinov3_base_primus_multiscale_Trainer"
-TRAINER_3D="meddinov3_3d_primus_multiscale_Trainer"
+TRAINER_3D="meddinov3_3d_centering_d16_primus_multiscale_Trainer"
 
 # d_patch=16: keeps token count closest to pretraining (600 tok, 3.1x pretrained 196).
 # Safe baseline before pushing finer depth resolution (d=8 → 1200 tok, 6.1x).

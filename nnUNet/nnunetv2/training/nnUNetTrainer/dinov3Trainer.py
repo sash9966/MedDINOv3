@@ -1988,6 +1988,42 @@ class meddinov3_3d_ashwin_primus_multiscale_Trainer(meddinov3_3d_primus_multisca
         )
 
 
+class meddinov3_3d_centering_d16_primus_multiscale_Trainer(meddinov3_3d_primus_multiscale_Trainer):
+    """
+    Centering-inflation, d_patch=16.  Results directory is isolated by class name.
+
+    Hard-codes MEDDINOV3_D_PATCH=16 in __init__ so this trainer always tokenises
+    at d=16 (600 tokens, 3.1× pretrained) regardless of any env var that may be
+    set by a concurrent d=8 job.  The checkpoint must be inflated with d_patch=16
+    (inflate_weights_3d.py --inflation centering --d_patch 16).
+    """
+
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        import os as _os
+        _os.environ["MEDDINOV3_D_PATCH"] = "16"
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        print("[meddinov3_3d_centering_d16] d_patch=16 locked (centering inflation)")
+
+
+class meddinov3_3d_centering_d8_primus_multiscale_Trainer(meddinov3_3d_primus_multiscale_Trainer):
+    """
+    Centering-inflation, d_patch=8.  Results directory is isolated by class name.
+
+    Hard-codes MEDDINOV3_D_PATCH=8 in __init__ so this trainer always tokenises
+    at d=8 (1200 tokens, 6.1× pretrained) regardless of any env var that may be
+    set by a concurrent d=16 job.  The checkpoint must be inflated with d_patch=8
+    (inflate_weights_3d.py --inflation centering --d_patch 8).
+    """
+
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        import os as _os
+        _os.environ["MEDDINOV3_D_PATCH"] = "8"
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        print("[meddinov3_3d_centering_d8] d_patch=8 locked (centering inflation)")
+
+
 def build_dinov3_base():
     from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base
     # Initialize model
