@@ -2,118 +2,156 @@
 add_chd_diagnosis_to_properties.py — inject per-case multi-hot CHD diagnosis
 vectors into nnUNet preprocessed case .pkl property files.
 
-Reuses the EXISTING disease mapping in the nnunet_CHD folder so the conditioned
-trainer compares fairly against prior work. Writes two keys into each case's
-properties dict:
-    properties['diagnosis_vec']    list[float], length = len(DIAGNOSIS_ORDER) (multi-hot)
-    properties['diagnosis_names']  list[str] of the diagnoses present for the case
+Reads imageCHD_dataset_info.xlsx (the spreadsheet at nnUNet_raw/Dataset030_*/),
+which has one row per case (index=1001..1178) and 16 binary diagnosis columns.
+Writes two keys into each case's .pkl:
 
-A case may have several diagnoses (multi-label) -> several 1s in the vector.
-A case absent from the mapping gets an all-zero vector (== UNK / unconditioned).
+    properties['diagnosis_vec']    list[float], len 18 (multi-hot)
+    properties['diagnosis_names']  list[str] of diagnoses present
 
--------------------------------------------------------------------------------
-IMPORTANT — adapt load_case_to_diagnoses() to the real mapping file format.
-The mapping lives on the server (/scratch/users/sastocke/nnunet_CHD), not in this
-repo, so the parser below supports the two most common shapes and is selected by
-file extension. Confirm the column/key names match your file, then freeze
-DIAGNOSIS_ORDER (its order defines the vector layout and must never change).
--------------------------------------------------------------------------------
+18-label canonical vector = 16 spreadsheet diagnoses + HLHS + TA
+(the two NIH/CDC CCHD types absent from this cohort; they get all-zeros here
+but the model slot is reserved so the vector is future-proof).
+
+A case absent from the spreadsheet gets an all-zero vector (UNK = unconditioned).
 """
 
 import argparse
-import csv
-import json
 import os
+import re
+import sys
 
 from batchgenerators.utilities.file_and_folder_operations import (
-    subfiles, load_pickle, write_pickle, isfile,
+    subfiles, load_pickle, write_pickle,
 )
 
-# Canonical, FROZEN ordering of the multi-hot vector. Index = bit position.
-# EDIT to match the label set in the nnunet_CHD mapping (and keep it fixed).
+# ── Canonical 18-label vector (FROZEN — never reorder) ──────────────────────
+# Columns 0-15 match the spreadsheet column order exactly.
+# Columns 16-17 are the two NIH/CDC CCHDs not in this dataset (always 0 here).
 DIAGNOSIS_ORDER = [
-    "VSD",
-    "ASD",
-    "Coarctation",
-    "Pulmonary_Atresia",
+    "ASD",    # 0  Atrial Septal Defect
+    "VSD",    # 1  Ventricular Septal Defect
+    "AVSD",   # 2  Atrioventricular Septal Defect
+    "ToF",    # 3  Tetralogy of Fallot
+    "TGA",    # 4  Transposition of Great Arteries
+    "DORV",   # 5  Double Outlet Right Ventricle
+    "CAT",    # 6  Common Arterial Trunk (Truncus Arteriosus)
+    "CA",     # 7  Coarctation of Aorta
+    "AAH",    # 8  Aortic Arch Hypoplasia
+    "DAA",    # 9  Double Aortic Arch
+    "IAA",    # 10 Interrupted Aortic Arch
+    "PA",     # 11 Pulmonary Atresia
+    "APVC",   # 12 Anomalous Pulmonary Venous Connection (TAPVR)
+    "DSVC",   # 13 Drainage of Superior Vena Cava variant
+    "PDA",    # 14 Patent Ductus Arteriosus
+    "PAS",    # 15 Pulmonary Artery Stenosis
+    "HLHS",   # 16 Hypoplastic Left Heart Syndrome (NIH/CDC — absent in dataset)
+    "TA",     # 17 Tricuspid Atresia (NIH/CDC — absent in dataset)
 ]
+# CHD_NUM_DIAGNOSES = 18
+# ────────────────────────────────────────────────────────────────────────────
 
 
-def load_case_to_diagnoses(mapping_path: str) -> dict:
-    """Return {case_id: [diagnosis_name, ...]} from the existing mapping file.
+def _load_xlsx(xlsx_path: str) -> dict:
+    """Return {numeric_case_id_str: [diag, ...]} from the spreadsheet."""
+    try:
+        import openpyxl
+    except ImportError:
+        sys.exit("Install openpyxl: pip install openpyxl")
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    header = rows[0]  # ('index', 'ASD', 'VSD', ...)
+    diag_cols = list(header[1:])  # the 16 diagnosis column names
 
-    Supported formats (selected by extension):
-      .json : {"case_id": ["VSD", "ASD"], ...}  OR  {"case_id": "VSD", ...}
-      .csv  : columns 'case_id' and 'diagnosis'; diagnosis may be a single label
-              or a delimited list (';' or '|' or ',') for multi-label cases.
-    Adapt the column/key names here if the real file differs.
-    """
-    ext = os.path.splitext(mapping_path)[1].lower()
     mapping = {}
-    if ext == ".json":
-        with open(mapping_path) as f:
-            raw = json.load(f)
-        for case_id, val in raw.items():
-            mapping[case_id] = val if isinstance(val, list) else [val]
-    elif ext == ".csv":
-        with open(mapping_path, newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                case_id = row["case_id"]
-                diag = row["diagnosis"].strip()
-                for sep in (";", "|", ","):
-                    if sep in diag:
-                        names = [d.strip() for d in diag.split(sep) if d.strip()]
-                        break
-                else:
-                    names = [diag] if diag else []
-                mapping[case_id] = names
-    else:
-        raise ValueError(f"Unsupported mapping extension '{ext}' (use .json or .csv)")
+    for row in rows[1:]:
+        if row[0] is None:
+            continue
+        case_num = str(int(row[0]))
+        names = [diag_cols[j] for j, v in enumerate(row[1:]) if v]
+        mapping[case_num] = names
     return mapping
 
 
-def to_multihot(names) -> list:
-    idx = {name: i for i, name in enumerate(DIAGNOSIS_ORDER)}
-    vec = [0.0] * len(DIAGNOSIS_ORDER)
-    for n in names:
-        if n not in idx:
-            raise KeyError(
-                f"Diagnosis '{n}' not in DIAGNOSIS_ORDER {DIAGNOSIS_ORDER}. "
-                "Add it (append, do not reorder) and keep the order frozen."
-            )
-        vec[idx[n]] = 1.0
-    return vec
+def _extract_num(identifier: str) -> str:
+    """Extract trailing digit string from a case identifier.
+
+    Examples:
+        "1001"              -> "1001"
+        "imageCHD_1001"     -> "1001"
+        "ct_1001_0000"      -> "1001"  (first group of >=3 digits wins)
+    """
+    nums = re.findall(r'\d{3,}', identifier)
+    return nums[0] if nums else identifier
 
 
-def inject(preprocessed_folder: str, mapping_path: str) -> None:
-    case_to_diag = load_case_to_diagnoses(mapping_path)
-    pkls = subfiles(preprocessed_folder, suffix=".pkl", join=True)
-    n_hit = n_unk = 0
+def inject(preprocessed_folder: str, xlsx_path: str, dry_run: bool = False) -> None:
+    mapping = _load_xlsx(xlsx_path)
+    diag_idx = {name: i for i, name in enumerate(DIAGNOSIS_ORDER)}
+
+    def to_multihot(names):
+        vec = [0.0] * len(DIAGNOSIS_ORDER)
+        for n in names:
+            if n not in diag_idx:
+                print(f"  WARNING: '{n}' not in DIAGNOSIS_ORDER — skipped")
+                continue
+            vec[diag_idx[n]] = 1.0
+        return vec
+
+    pkls = sorted(subfiles(preprocessed_folder, suffix=".pkl", join=True))
+    if not pkls:
+        sys.exit(f"No .pkl files found in {preprocessed_folder}")
+
+    n_hit = n_unk = n_multi = 0
     for pkl in pkls:
-        case_id = os.path.basename(pkl)[:-4]
-        names = case_to_diag.get(case_id, [])
+        stem = os.path.basename(pkl)[:-4]          # e.g. "imageCHD_1001"
+        num = _extract_num(stem)                    # e.g. "1001"
+        names = mapping.get(num, [])
+
         if names:
             n_hit += 1
         else:
             n_unk += 1
-        props = load_pickle(pkl)
-        props["diagnosis_names"] = names
-        props["diagnosis_vec"] = to_multihot(names)
-        write_pickle(props, pkl)
-    print(f"Injected diagnosis into {len(pkls)} cases in {preprocessed_folder}")
-    print(f"  with diagnosis: {n_hit}   UNK/empty: {n_unk}   vec_len={len(DIAGNOSIS_ORDER)}")
-    print(f"  CHD_NUM_DIAGNOSES={len(DIAGNOSIS_ORDER)}  (export this for training)")
+        if len(names) > 1:
+            n_multi += 1
+
+        if not dry_run:
+            props = load_pickle(pkl)
+            props["diagnosis_names"] = names
+            props["diagnosis_vec"] = to_multihot(names)
+            write_pickle(props, pkl)
+        else:
+            print(f"  [DRY] {stem} ({num}) -> {names}")
+
+    print()
+    print(f"{'[DRY RUN] ' if dry_run else ''}Processed {len(pkls)} cases in:")
+    print(f"  {preprocessed_folder}")
+    print(f"  matched: {n_hit}  unk/zero: {n_unk}  multi-label: {n_multi}")
+    print(f"  vector length: {len(DIAGNOSIS_ORDER)}  (CHD_NUM_DIAGNOSES=18)")
+    if n_unk:
+        print(f"  NOTE: {n_unk} cases have no diagnosis entry → all-zero vector (unconditioned)")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Inject multi-hot CHD diagnosis into case .pkl files.")
-    ap.add_argument("--preprocessed_folder", required=True,
-                    help="e.g. .../nnUNet_preprocessed/Dataset030_imageCHD_HU/nnUNetPlans_3d_fullres")
-    ap.add_argument("--mapping", required=True,
-                    help="Path to the existing disease mapping (.json or .csv) in nnunet_CHD")
+    ap = argparse.ArgumentParser(
+        description="Inject 18-label multi-hot CHD diagnosis into nnUNet case .pkl files."
+    )
+    ap.add_argument(
+        "--preprocessed_folder", required=True,
+        help="Path to the nnUNetPlans_3d_fullres folder containing case .pkl files",
+    )
+    ap.add_argument(
+        "--xlsx", required=True,
+        help="Path to imageCHD_dataset_info.xlsx "
+             "(at nnUNet_raw/Dataset030_imageCHD_HU/imageCHD_dataset_info.xlsx)",
+    )
+    ap.add_argument(
+        "--dry_run", action="store_true",
+        help="Print mappings without writing anything",
+    )
     args = ap.parse_args()
-    inject(args.preprocessed_folder, args.mapping)
+    inject(args.preprocessed_folder, args.xlsx, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

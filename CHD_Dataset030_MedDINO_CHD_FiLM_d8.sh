@@ -60,7 +60,7 @@ DATASET_NAME="Dataset030_imageCHD_HU"
 CONFIG_2D="2d"
 CONFIG_3D="3d_fullres"
 TRAINER_2D="meddinov3_base_primus_multiscale_Trainer"
-TRAINER_3D="meddinov3_3d_centering_d8_primus_multiscale_Trainer"
+TRAINER_3D="meddinov3_3d_chd_film_d8_Trainer"
 
 # d_patch=8: finer depth resolution vs. d_patch=16 (activation-preserving centering
 # can tolerate the higher token count better than Ashwin).
@@ -79,9 +79,21 @@ export MEDDINOV3_D_PATCH="${D_PATCH}"
 export MEDDINOV3_NUM_EPOCHS=500
 export MEDDINOV3_BACKBONE_LR_SCALE=0.1
 
+# ── CHD diagnosis conditioning (FiLM) ─────────────────────────────
+# Rung 1: bridge FiLM only (CHD_FILM_DECODER=0). FiLM is identity-init so this
+# run starts numerically identical to unconditioned d=8. Set CHD_FILM_DECODER=1
+# for rung 2 ablation.
+export CHD_FILM_BRIDGE=1
+export CHD_FILM_DECODER=0
+# 18-label canonical vector: 16 from imageCHD_dataset_info.xlsx + HLHS + TA
+# (NIH/CDC CCHD standard; the 2 extra slots are always 0 in this dataset).
+export CHD_NUM_DIAGNOSES=18
+# Spreadsheet lives in the raw dataset folder (already on the server).
+CHD_XLSX="${nnUNet_raw}/${DATASET_NAME}/imageCHD_dataset_info.xlsx"
+
 IN_DIR="${nnUNet_raw}/${DATASET_NAME}/imagesTs"
 PRED_BASE="${nnUNet_results}/${DATASET_NAME}/predictions"
-CKPT_DIR="${nnUNet_results}/${DATASET_NAME}/.checkpoints/CHD_Dataset030_MedDINO_Centering_d8"
+CKPT_DIR="${nnUNet_results}/${DATASET_NAME}/.checkpoints/CHD_Dataset030_MedDINO_CHD_FiLM_d8"
 START_TS=$(date +%s)
 
 # ─────────────────────────────────────────────
@@ -270,7 +282,7 @@ else
         if ! is_shared_done "${DIAG_KEY}"; then
             python3 "${REPO}/tools/add_chd_diagnosis_to_properties.py" \
                 --preprocessed_folder "${nnUNet_preprocessed}/${DATASET_NAME}/nnUNetPlans_3d_fullres" \
-                --mapping "${CHD_DIAG_MAPPING}"
+                --xlsx "${CHD_XLSX}"
             mark_shared_done "${DIAG_KEY}"
         fi
     ) 9>"${SHARED_CKPT_DIR}/inject_diag_D${DATASET_ID}.lock"
