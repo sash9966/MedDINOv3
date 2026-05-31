@@ -76,61 +76,86 @@ class FiLMLogger(nnUNetLogger):
         self.bridge_gamma_per_layer = []  # each entry: list of num_bridge_layers floats
 
     def plot_progress_png(self, output_folder):
-        # Let parent draw the standard 3-panel progress.png.
-        super().plot_progress_png(output_folder)
-
-        epoch = len(self.my_fantastic_logging['film_bridge_gamma_norm'])
-        if epoch == 0:
+        # Rebuild the standard 3 panels + 3 FiLM panels in one progress.png.
+        epoch = min([len(i) for i in self.my_fantastic_logging.values()]) - 1
+        if epoch < 0:
             return
-        x = list(range(epoch))
+        x = list(range(epoch + 1))
+        film_epoch = len(self.my_fantastic_logging['film_bridge_gamma_norm'])
 
-        sns.set(font_scale=2.0)
-        n_panels = 3 if self.bridge_gamma_per_layer else 2
-        fig, axes = plt.subplots(n_panels, 1, figsize=(30, n_panels * 16))
+        sns.set(font_scale=2.5)
+        fig, ax_all = plt.subplots(6, 1, figsize=(30, 108))
 
-        # Panel 1 — aggregate γ and β norms.
-        ax = axes[0]
-        ax.plot(x, self.my_fantastic_logging['film_bridge_gamma_norm'][:epoch],
-                color='steelblue', lw=3, label='bridge γ norm (mean)')
-        ax.plot(x, self.my_fantastic_logging['film_bridge_beta_norm'][:epoch],
-                color='steelblue', lw=3, ls='--', label='bridge β norm (mean)')
-        if any(v > 0 for v in self.my_fantastic_logging['film_decoder_gamma_norm'][:epoch]):
-            ax.plot(x, self.my_fantastic_logging['film_decoder_gamma_norm'][:epoch],
-                    color='coral', lw=3, label='decoder γ norm (mean)')
-            ax.plot(x, self.my_fantastic_logging['film_decoder_beta_norm'][:epoch],
-                    color='coral', lw=3, ls='--', label='decoder β norm (mean)')
+        # ── Panel 0: loss + pseudo Dice (identical to parent) ──────────────
+        ax = ax_all[0]
+        ax2 = ax.twinx()
+        ax.plot(x, self.my_fantastic_logging['train_losses'][:epoch + 1],
+                color='b', ls='-', label='loss_tr', linewidth=4)
+        ax.plot(x, self.my_fantastic_logging['val_losses'][:epoch + 1],
+                color='r', ls='-', label='loss_val', linewidth=4)
+        ax2.plot(x, self.my_fantastic_logging['mean_fg_dice'][:epoch + 1],
+                 color='g', ls='dotted', label='pseudo dice', linewidth=3)
+        ax2.plot(x, self.my_fantastic_logging['ema_fg_dice'][:epoch + 1],
+                 color='g', ls='-', label='pseudo dice (mov. avg.)', linewidth=4)
+        ax.set_xlabel('epoch'); ax.set_ylabel('loss'); ax2.set_ylabel('pseudo dice')
+        ax.legend(loc=(0, 1)); ax2.legend(loc=(0.2, 1))
+
+        # ── Panel 1: epoch duration (identical to parent) ───────────────────
+        ax = ax_all[1]
+        ax.plot(x, [e - s for e, s in zip(
+                    self.my_fantastic_logging['epoch_end_timestamps'][:epoch + 1],
+                    self.my_fantastic_logging['epoch_start_timestamps'][:epoch + 1])],
+                color='b', ls='-', label='epoch duration', linewidth=4)
+        ax.set(ylim=[0, ax.get_ylim()[1]])
+        ax.set_xlabel('epoch'); ax.set_ylabel('time [s]'); ax.legend(loc=(0, 1))
+
+        # ── Panel 2: learning rate (identical to parent) ────────────────────
+        ax = ax_all[2]
+        ax.plot(x, self.my_fantastic_logging['lrs'][:epoch + 1],
+                color='b', ls='-', label='learning rate', linewidth=4)
+        ax.set_xlabel('epoch'); ax.set_ylabel('learning rate'); ax.legend(loc=(0, 1))
+
+        # ── Panel 3: FiLM γ and β norms ─────────────────────────────────────
+        ax = ax_all[3]
+        fx = list(range(film_epoch))
+        ax.plot(fx, self.my_fantastic_logging['film_bridge_gamma_norm'][:film_epoch],
+                color='steelblue', lw=4, label='bridge γ norm')
+        ax.plot(fx, self.my_fantastic_logging['film_bridge_beta_norm'][:film_epoch],
+                color='steelblue', lw=4, ls='--', label='bridge β norm')
+        dec_g = self.my_fantastic_logging['film_decoder_gamma_norm'][:film_epoch]
+        if any(v > 0 for v in dec_g):
+            ax.plot(fx, dec_g, color='coral', lw=4, label='decoder γ norm')
+            ax.plot(fx, self.my_fantastic_logging['film_decoder_beta_norm'][:film_epoch],
+                    color='coral', lw=4, ls='--', label='decoder β norm')
         ax.axhline(0, color='k', lw=1, ls=':')
-        ax.set_xlabel('epoch')
-        ax.set_ylabel('mean |weight|')
-        ax.set_title('FiLM weight norms — non-zero = conditioning is active')
-        ax.legend(loc='upper left')
+        ax.set_xlabel('epoch'); ax.set_ylabel('mean |weight|')
+        ax.set_title('FiLM weight norms  (zero = conditioning not yet active)')
+        ax.legend(loc=(0, 1))
 
-        # Panel 2 — conditioner embedding norm.
-        ax = axes[1]
-        ax.plot(x, self.my_fantastic_logging['conditioner_weight_norm'][:epoch],
-                color='purple', lw=3, label='conditioner weight norm')
-        ax.set_xlabel('epoch')
-        ax.set_ylabel('L2 norm')
+        # ── Panel 4: conditioner weight norm ────────────────────────────────
+        ax = ax_all[4]
+        ax.plot(fx, self.my_fantastic_logging['conditioner_weight_norm'][:film_epoch],
+                color='purple', lw=4, label='conditioner weight norm')
+        ax.set_xlabel('epoch'); ax.set_ylabel('L2 norm')
         ax.set_title('Diagnosis conditioner weight norm')
-        ax.legend(loc='upper left')
+        ax.legend(loc=(0, 1))
 
-        # Panel 3 — per-layer bridge γ norms (blocks 2, 5, 8, 11).
-        if self.bridge_gamma_per_layer and n_panels == 3:
-            ax = axes[2]
+        # ── Panel 5: per-ViT-scale bridge γ (blocks 2, 5, 8, 11) ───────────
+        ax = ax_all[5]
+        if self.bridge_gamma_per_layer:
             block_labels = ['block 2', 'block 5', 'block 8', 'block 11']
             colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-            per_layer = np.array(self.bridge_gamma_per_layer[:epoch])  # (epoch, n_layers)
+            per_layer = np.array(self.bridge_gamma_per_layer[:film_epoch])
             for i in range(min(self.num_bridge_layers, per_layer.shape[1])):
-                label = block_labels[i] if i < len(block_labels) else f'layer {i}'
-                ax.plot(x, per_layer[:, i], color=colors[i % len(colors)], lw=3, label=label)
-            ax.axhline(0, color='k', lw=1, ls=':')
-            ax.set_xlabel('epoch')
-            ax.set_ylabel('mean |γ weight|')
-            ax.set_title('Bridge FiLM γ per ViT scale — which scale responds first?')
-            ax.legend(loc='upper left')
+                lbl = block_labels[i] if i < len(block_labels) else f'layer {i}'
+                ax.plot(fx, per_layer[:, i], color=colors[i % 4], lw=4, label=lbl)
+        ax.axhline(0, color='k', lw=1, ls=':')
+        ax.set_xlabel('epoch'); ax.set_ylabel('mean |γ weight|')
+        ax.set_title('Bridge FiLM γ per ViT scale — which scale responds first?')
+        ax.legend(loc=(0, 1))
 
         plt.tight_layout()
-        fig.savefig(join(output_folder, 'film_progress.png'))
+        fig.savefig(join(output_folder, 'progress.png'))
         plt.close()
 
 
