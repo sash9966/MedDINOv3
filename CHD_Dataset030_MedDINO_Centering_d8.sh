@@ -3,23 +3,14 @@
 #  CHD_Dataset030_MedDINO_Centering_d8.sh
 #  Dataset030_imageCHD_HU — MedDINOv3 3D centering inflation, d_patch=8, 500 ep
 #
-#  Experiments (fold 0):
-#    1. MedDINOv3 2D  (meddinov3_base_primus_multiscale_Trainer, 2d)
-#       Shared with CHD_Dataset030_MedDINO.sh — skipped if already done.
-#    2. MedDINOv3 3D centering d=8  (meddinov3_3d_centering_d8_primus_multiscale_Trainer, 3d_fullres)
-#       Inflation: centering (activation-preserving; 2D weights on centre slice).
-#       d_patch=8  → (96/8)*(160/16)*(160/16) = 1200 tokens (6.1x pretrained).
-#       Token budget will print *** HIGH — intentional experiment testing whether
-#       finer depth resolution (8 vs 16) compensates for the higher OOD ratio
-#       when combined with activation-preserving inflation + AdamW.
+#  Extends the d=16 run with finer depth resolution (d=8 = 1200 tokens vs 600).
+#  Uses the SAME centering inflation approach on the SAME base 2D weights,
+#  re-inflated with d_patch=8.
 #
-#  Optimizer: AdamW (fixed vs earlier SGD runs), warmup=10ep, 500 epochs.
+#  Trainer:  meddinov3_3d_centering_d8_primus_multiscale_Trainer
+#  Results:  nnUNet_results/.../meddinov3_3d_centering_d8_primus_multiscale_Trainer__nnUNetPlans__3d_fullres/
 #
-#  RESUME SUPPORT
-#    Resubmit the same script to continue from where it stopped.
-#
-#  Before first submission:
-#    mkdir -p /scratch/users/sastocke/nnunet_CHD/logs
+#  RESUME SUPPORT — resubmit the same script to continue.
 # =============================================================================
 #SBATCH --job-name=D030-MedDINO-C8
 #SBATCH --partition=bioe
@@ -57,14 +48,8 @@ export PYTHONUNBUFFERED=1
 # ─────────────────────────────────────────────
 DATASET_ID=30
 DATASET_NAME="Dataset030_imageCHD_HU"
-CONFIG_2D="2d"
 CONFIG_3D="3d_fullres"
-TRAINER_2D="meddinov3_base_primus_multiscale_Trainer"
 TRAINER_3D="meddinov3_3d_centering_d8_primus_multiscale_Trainer"
-
-# d_patch=8: finer depth resolution vs. d_patch=16 (activation-preserving centering
-# can tolerate the higher token count better than Ashwin).
-# Token count: (96/8)*(160/16)*(160/16) = 1200 tokens (6.1x pretrained — HIGH).
 D_PATCH=8
 
 REPO="/scratch/users/sastocke/MedDINOv3"
@@ -80,12 +65,12 @@ export MEDDINOV3_NUM_EPOCHS=500
 export MEDDINOV3_BACKBONE_LR_SCALE=0.1
 
 IN_DIR="${nnUNet_raw}/${DATASET_NAME}/imagesTs"
-PRED_BASE="${nnUNet_results}/${DATASET_NAME}/predictions"
+PRED_DIR="${nnUNet_results}/${DATASET_NAME}/predictions/MedDINO_3d_center_d8"
 CKPT_DIR="${nnUNet_results}/${DATASET_NAME}/.checkpoints/CHD_Dataset030_MedDINO_Centering_d8"
 START_TS=$(date +%s)
 
 # ─────────────────────────────────────────────
-# 3.  Checkpoint helpers
+# 3.  Helpers
 # ─────────────────────────────────────────────
 mkdir -p "${CKPT_DIR}" "${SHARED_CKPT_DIR}"
 mark_done()        { touch "${CKPT_DIR}/${1}.done"; }
@@ -94,71 +79,29 @@ mark_shared_done() { touch "${SHARED_CKPT_DIR}/${1}.done"; }
 is_shared_done()   { [[ -f "${SHARED_CKPT_DIR}/${1}.done" ]]; }
 
 # ─────────────────────────────────────────────
-# 4.  Banner helpers
+# 4.  Banner
 # ─────────────────────────────────────────────
-print_banner() {
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║  CHD_Dataset030_MedDINO_Centering_d8.sh  — START               ║"
-    echo "╠══════════════════════════════════════════════════════════════════╣"
-    printf "║  %-66s ║\n" "Date/Time    : $(date '+%Y-%m-%d %H:%M:%S')"
-    printf "║  %-66s ║\n" "SLURM Job    : ${SLURM_JOB_ID:-manual}  node=${SLURMD_NODENAME:-local}"
-    printf "║  %-66s ║\n" "Dataset      : ${DATASET_NAME}  (ID=${DATASET_ID})"
-    printf "║  %-66s ║\n" "Configs      : ${CONFIG_2D}  |  ${CONFIG_3D}"
-    printf "║  %-66s ║\n" "Folds        : 0 only"
-    printf "║  %-66s ║\n" "Epochs       : 2D=100  3D=${MEDDINOV3_NUM_EPOCHS}"
-    printf "║  %-66s ║\n" "d_patch      : ${D_PATCH}  (1200 tokens, 6.1x pretrained — HIGH)"
-    printf "║  %-66s ║\n" "Inflation    : centering (activation-preserving)"
-    printf "║  %-66s ║\n" "Optimizer    : AdamW betas=(0.9,0.98), warmup=10ep, clip=1.0"
-    printf "║  %-66s ║\n" "Backbone LR  : ${MEDDINOV3_BACKBONE_LR_SCALE}  (patch_embed+depth_pe wd=0)"
-    printf "║  %-66s ║\n" ""
-    printf "║  %-66s ║\n" "Exp 1 — 2D   : ${TRAINER_2D}"
-    printf "║  %-66s ║\n" "Exp 2 — 3D   : ${TRAINER_3D}"
-    printf "║  %-66s ║\n" ""
-    printf "║  %-66s ║\n" "2D ckpt      : ${RAW_CKPT}"
-    printf "║  %-66s ║\n" "3D ckpt      : ${INFLATED_CKPT}"
-    printf "║  %-66s ║\n" "Raw data     : ${IN_DIR}"
-    printf "║  %-66s ║\n" "Results      : ${nnUNet_results}/${DATASET_NAME}"
-    printf "║  %-66s ║\n" "Inference    : ${PRED_BASE}"
-    printf "║  %-66s ║\n" "Marker dir   : ${CKPT_DIR}"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
-    echo ""
-    echo "  Completed steps (from previous runs, if any):"
-    ls "${CKPT_DIR}/"*.done 2>/dev/null \
-        | xargs -I{} basename {} .done \
-        | sort | sed 's/^/    [DONE] /' \
-        || echo "    (none — fresh run)"
-    echo ""
-}
-
-print_footer() {
-    local elapsed=$(( $(date +%s) - START_TS ))
-    local hh=$(( elapsed / 3600 ))
-    local mm=$(( (elapsed % 3600) / 60 ))
-    local ss=$(( elapsed % 60 ))
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║  CHD_Dataset030_MedDINO_Centering_d8.sh  — COMPLETE            ║"
-    echo "╠══════════════════════════════════════════════════════════════════╣"
-    printf "║  %-66s ║\n" "Date/Time    : $(date '+%Y-%m-%d %H:%M:%S')"
-    printf "║  %-66s ║\n" "SLURM Job    : ${SLURM_JOB_ID:-manual}"
-    printf "║  %-66s ║\n" "Dataset      : ${DATASET_NAME}  (ID=${DATASET_ID})"
-    printf "║  %-66s ║\n" "Elapsed      : ${hh}h ${mm}m ${ss}s"
-    printf "║  %-66s ║\n" ""
-    printf "║  %-66s ║\n" "2D preds     : ${PRED_BASE}/MedDINO_2d_ensemble"
-    printf "║  %-66s ║\n" "3D preds     : ${PRED_BASE}/MedDINO_3d_center_d8_ensemble"
-    printf "║  %-66s ║\n" ""
-    printf "║  %-66s ║\n" "Next step:"
-    printf "║  %-66s ║\n" "  nnUNetv2_find_best_configuration ${DATASET_ID} \\"
-    printf "║  %-66s ║\n" "    -c ${CONFIG_2D} ${CONFIG_3D} \\"
-    printf "║  %-66s ║\n" "    -tr ${TRAINER_2D} ${TRAINER_3D}"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
-}
-
-# ─────────────────────────────────────────────
-# START
-# ─────────────────────────────────────────────
-print_banner
+echo ""
+echo "╔══════════════════════════════════════════════════════════════════╗"
+echo "║  CHD_Dataset030_MedDINO_Centering_d8.sh — START                ║"
+echo "╠══════════════════════════════════════════════════════════════════╣"
+printf "║  %-66s ║\n" "Date/Time    : $(date '+%Y-%m-%d %H:%M:%S')"
+printf "║  %-66s ║\n" "SLURM Job    : ${SLURM_JOB_ID:-manual}  node=${SLURMD_NODENAME:-local}"
+printf "║  %-66s ║\n" "Dataset      : ${DATASET_NAME}  (ID=${DATASET_ID})"
+printf "║  %-66s ║\n" "Trainer      : ${TRAINER_3D}"
+printf "║  %-66s ║\n" "d_patch      : ${D_PATCH}  (1200 tokens, 6.1x pretrained)"
+printf "║  %-66s ║\n" "Inflation    : centering (same approach as d=16)"
+printf "║  %-66s ║\n" "Optimizer    : AdamW, warmup=10ep, clip=1.0, backbone_lr=0.1"
+printf "║  %-66s ║\n" "Epochs       : ${MEDDINOV3_NUM_EPOCHS}"
+printf "║  %-66s ║\n" "Results      : nnUNet_results/${DATASET_NAME}/${TRAINER_3D}__nnUNetPlans__3d_fullres/"
+echo "╚══════════════════════════════════════════════════════════════════╝"
+echo ""
+echo "  Completed steps (from previous runs, if any):"
+ls "${CKPT_DIR}/"*.done 2>/dev/null \
+    | xargs -I{} basename {} .done \
+    | sort | sed 's/^/    [DONE] /' \
+    || echo "    (none — fresh run)"
+echo ""
 
 # ─────────────────────────────────────────────
 # Phase 1 — Download 2D checkpoint (shared)
@@ -166,9 +109,7 @@ print_banner
 if is_shared_done "download_2d_ckpt"; then
     echo "[SKIP] Phase 1: 2D checkpoint already downloaded"
 else
-    echo "================================================================"
-    echo "Phase 1: Downloading MedDINOv3 2D checkpoint from HuggingFace"
-    echo "================================================================"
+    echo "Phase 1: Downloading MedDINOv3 2D checkpoint"
     cat > /tmp/c8_download_ckpt.py << 'PYEOF'
 from huggingface_hub import hf_hub_download
 import shutil, os, sys
@@ -189,9 +130,7 @@ fi
 if is_shared_done "inflate_center_d8"; then
     echo "[SKIP] Phase 2: centering-inflated d=8 checkpoint already exists"
 else
-    echo "================================================================"
-    echo "Phase 2: Centering inflation  d_patch=8"
-    echo "================================================================"
+    echo "Phase 2: Centering inflation d_patch=8"
     python3 "${INFLATE_SCRIPT}" \
         --checkpoint "${RAW_CKPT}" \
         --d_patch "${D_PATCH}" \
@@ -201,132 +140,49 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# Phase 3 — Plan and preprocess
+# Phase 3 — 3D centering d=8 training (fold 0)
 # ─────────────────────────────────────────────
-if is_done "p3_preprocess"; then
-    echo "[SKIP] Phase 3: preprocess already done"
+echo "================================================================"
+echo "Phase 3: 3D centering d=8 training — fold 0  (${MEDDINOV3_NUM_EPOCHS} epochs)"
+echo "================================================================"
+KEY="p3_3d_center_d8_fold0"
+if is_done "${KEY}"; then
+    echo "[SKIP] ${KEY}"
 else
-    echo "================================================================"
-    echo "Phase 3: plan_and_preprocess — ${CONFIG_2D} | ${CONFIG_3D}"
-    echo "================================================================"
-    nnUNetv2_plan_and_preprocess \
-        -d ${DATASET_ID} \
-        -c ${CONFIG_2D} ${CONFIG_3D} \
-        --verify_dataset_integrity
-    mark_done "p3_preprocess"
+    echo "--- ${KEY} ---"
+    nnUNetv2_train ${DATASET_ID} ${CONFIG_3D} 0 \
+        -tr ${TRAINER_3D} --npz
+    mark_done "${KEY}"
 fi
 
 # ─────────────────────────────────────────────
-# Phase 3.5 — Pre-unpack dataset (shared, locked)
+# Phase 4 — Inference on test set
 # ─────────────────────────────────────────────
-UNPACK_LOCK="${SHARED_CKPT_DIR}/unpack_D${DATASET_ID}.lock"
-for _CFG in "${CONFIG_2D}" "${CONFIG_3D}"; do
-    KEY="unpack_D${DATASET_ID}_${_CFG}"
-    if is_shared_done "${KEY}"; then
-        echo "[SKIP] Phase 3.5: ${_CFG} already unpacked"
-    else
-        echo "================================================================"
-        echo "Phase 3.5: Pre-unpack ${_CFG} (flock-protected)"
-        echo "================================================================"
-        (
-            flock -x 9
-            if ! is_shared_done "${KEY}"; then
-                cat > /tmp/c8_unpack.py << 'PYEOF'
-import sys, os
-sys.path.insert(0, os.environ.get('PYTHONPATH', '').split(':')[0])
-from nnunetv2.training.dataloading.utils import unpack_dataset
-folder = sys.argv[1]
-print(f"Unpacking: {folder}")
-unpack_dataset(folder, unpack_segmentation=True, overwrite_existing=False, num_processes=4, verify_npy=True)
-print("Done.")
-PYEOF
-                _PREP_FOLDER="${nnUNet_preprocessed}/${DATASET_NAME}"
-                if [[ "${_CFG}" == "2d" ]]; then
-                    _DATA_ID="nnUNetPlans_2d"
-                else
-                    _DATA_ID="nnUNetPlans_3d_fullres"
-                fi
-                python3 /tmp/c8_unpack.py "${_PREP_FOLDER}/${_DATA_ID}"
-                mark_shared_done "${KEY}"
-            fi
-        ) 9>"${UNPACK_LOCK}_${_CFG}"
-    fi
-done
+echo "================================================================"
+echo "Phase 4: Inference"
+echo "================================================================"
+mkdir -p "${PRED_DIR}"
 
-# ─────────────────────────────────────────────
-# Phase 4 — MedDINOv3 2D training (fold 0)
-# Shared marker — skip if CHD_Dataset030_MedDINO.sh already ran it.
-# ─────────────────────────────────────────────
-echo "================================================================"
-echo "Phase 4: MedDINOv3 2D training — fold 0"
-echo "================================================================"
-for FOLD in 0; do
-    KEY="2d_D${DATASET_ID}_fold${FOLD}"
-    if is_shared_done "${KEY}"; then
-        echo "[SKIP] ${KEY} (already done by another job)"
-    else
-        echo "--- ${KEY} ---"
-        nnUNetv2_train ${DATASET_ID} ${CONFIG_2D} ${FOLD} \
-            -tr ${TRAINER_2D} --npz
-        mark_shared_done "${KEY}"
-    fi
-done
-
-# ─────────────────────────────────────────────
-# Phase 5 — MedDINOv3 3D centering d=8 training (fold 0)
-# ─────────────────────────────────────────────
-echo "================================================================"
-echo "Phase 5: MedDINOv3 3D centering d=8 training — fold 0  (${MEDDINOV3_NUM_EPOCHS} epochs)"
-echo "================================================================"
-for FOLD in 0; do
-    KEY="p5_3d_center_d8_fold${FOLD}"
-    if is_done "${KEY}"; then
-        echo "[SKIP] ${KEY}"
-    else
-        echo "--- ${KEY} ---"
-        nnUNetv2_train ${DATASET_ID} ${CONFIG_3D} ${FOLD} \
-            -tr ${TRAINER_3D} --npz
-        mark_done "${KEY}"
-    fi
-done
-
-# ─────────────────────────────────────────────
-# Phase 6 — Inference on test set
-# ─────────────────────────────────────────────
-echo "================================================================"
-echo "Phase 6: Inference"
-echo "================================================================"
-mkdir -p "${PRED_BASE}"
-
-PRED_2D="${PRED_BASE}/MedDINO_2d_ensemble"
-PRED_3D="${PRED_BASE}/MedDINO_3d_center_d8_ensemble"
-mkdir -p "${PRED_2D}" "${PRED_3D}"
-
-if is_shared_done "p6_infer_2d_D${DATASET_ID}"; then
-    echo "[SKIP] p6_infer_2d (already done by another job)"
+if is_done "p4_infer_3d_center_d8"; then
+    echo "[SKIP] p4_infer_3d_center_d8"
 else
-    echo "--- p6_infer_2d ---"
     nnUNetv2_predict \
-        -i "${IN_DIR}" -o "${PRED_2D}" \
-        -d ${DATASET_ID} -c ${CONFIG_2D} \
-        -f 0 \
-        -tr ${TRAINER_2D}
-    mark_shared_done "p6_infer_2d_D${DATASET_ID}"
-fi
-
-if is_done "p6_infer_3d_center_d8"; then
-    echo "[SKIP] p6_infer_3d_center_d8"
-else
-    echo "--- p6_infer_3d_center_d8 ---"
-    nnUNetv2_predict \
-        -i "${IN_DIR}" -o "${PRED_3D}" \
+        -i "${IN_DIR}" -o "${PRED_DIR}" \
         -d ${DATASET_ID} -c ${CONFIG_3D} \
         -f 0 \
         -tr ${TRAINER_3D}
-    mark_done "p6_infer_3d_center_d8"
+    mark_done "p4_infer_3d_center_d8"
 fi
 
 # ─────────────────────────────────────────────
 # END
 # ─────────────────────────────────────────────
-print_footer
+elapsed=$(( $(date +%s) - START_TS ))
+echo ""
+echo "╔══════════════════════════════════════════════════════════════════╗"
+echo "║  CHD_Dataset030_MedDINO_Centering_d8.sh — COMPLETE             ║"
+echo "╠══════════════════════════════════════════════════════════════════╣"
+printf "║  %-66s ║\n" "Elapsed : $(( elapsed/3600 ))h $(( (elapsed%3600)/60 ))m $(( elapsed%60 ))s"
+printf "║  %-66s ║\n" "Results : ${nnUNet_results}/${DATASET_NAME}/${TRAINER_3D}__nnUNetPlans__3d_fullres/"
+printf "║  %-66s ║\n" "Preds   : ${PRED_DIR}"
+echo "╚══════════════════════════════════════════════════════════════════╝"
