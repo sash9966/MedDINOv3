@@ -23,8 +23,14 @@ CHD_NUM_DIAGNOSES); inject it with tools/add_chd_diagnosis_to_properties.py.
 
 import os
 
+import numpy as np
 import torch
 from torch import nn
+
+import matplotlib
+matplotlib.use('agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Import parent trainers + the symbols their get_dataloaders body relies on,
 # straight from the dinov3Trainer module so they are guaranteed identical.
@@ -38,15 +44,176 @@ from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus_chd import (
     Primus_Multiscale3D_CHD,
     film_flags_from_env,
 )
+from nnunetv2.training.logging.nnunet_logger import nnUNetLogger
+from batchgenerators.utilities.file_and_folder_operations import join
+
+
+class FiLMLogger(nnUNetLogger):
+    """Extends nnUNetLogger with per-epoch FiLM activity tracking.
+
+    Tracks mean absolute value of FiLM γ (scale) and β (shift) weights across
+    all conditioning layers. At init these are all exactly zero (identity FiLM).
+    Seeing them stay near zero means the conditioning is not learning — the
+    primary debug signal when there is no Dice benefit from the diagnosis prior.
+
+    Adds a 4th subplot to progress.png with γ_norm and β_norm over epochs.
+    A 5th subplot shows per-bridge-layer γ norms individually (one line per ViT
+    scale: block 2, 5, 8, 11) so you can see which scale responds first.
+    """
+
+    def __init__(self, num_bridge_layers: int = 4, verbose: bool = False):
+        super().__init__(verbose=verbose)
+        self.num_bridge_layers = num_bridge_layers
+        # One scalar per epoch for each metric — must match logger contract.
+        self.my_fantastic_logging['film_bridge_gamma_norm'] = []
+        self.my_fantastic_logging['film_bridge_beta_norm'] = []
+        self.my_fantastic_logging['film_decoder_gamma_norm'] = []
+        self.my_fantastic_logging['film_decoder_beta_norm'] = []
+        self.my_fantastic_logging['conditioner_weight_norm'] = []
+        # Per-layer bridge gamma: stored as a list of lists (one list per epoch).
+        # Keep it separate from my_fantastic_logging so the base log() contract
+        # (scalar per epoch) is not broken.
+        self.bridge_gamma_per_layer = []  # each entry: list of num_bridge_layers floats
+
+    def plot_progress_png(self, output_folder):
+        # Let parent draw the standard 3-panel progress.png.
+        super().plot_progress_png(output_folder)
+
+        epoch = len(self.my_fantastic_logging['film_bridge_gamma_norm'])
+        if epoch == 0:
+            return
+        x = list(range(epoch))
+
+        sns.set(font_scale=2.0)
+        n_panels = 3 if self.bridge_gamma_per_layer else 2
+        fig, axes = plt.subplots(n_panels, 1, figsize=(30, n_panels * 16))
+
+        # Panel 1 — aggregate γ and β norms.
+        ax = axes[0]
+        ax.plot(x, self.my_fantastic_logging['film_bridge_gamma_norm'][:epoch],
+                color='steelblue', lw=3, label='bridge γ norm (mean)')
+        ax.plot(x, self.my_fantastic_logging['film_bridge_beta_norm'][:epoch],
+                color='steelblue', lw=3, ls='--', label='bridge β norm (mean)')
+        if any(v > 0 for v in self.my_fantastic_logging['film_decoder_gamma_norm'][:epoch]):
+            ax.plot(x, self.my_fantastic_logging['film_decoder_gamma_norm'][:epoch],
+                    color='coral', lw=3, label='decoder γ norm (mean)')
+            ax.plot(x, self.my_fantastic_logging['film_decoder_beta_norm'][:epoch],
+                    color='coral', lw=3, ls='--', label='decoder β norm (mean)')
+        ax.axhline(0, color='k', lw=1, ls=':')
+        ax.set_xlabel('epoch')
+        ax.set_ylabel('mean |weight|')
+        ax.set_title('FiLM weight norms — non-zero = conditioning is active')
+        ax.legend(loc='upper left')
+
+        # Panel 2 — conditioner embedding norm.
+        ax = axes[1]
+        ax.plot(x, self.my_fantastic_logging['conditioner_weight_norm'][:epoch],
+                color='purple', lw=3, label='conditioner weight norm')
+        ax.set_xlabel('epoch')
+        ax.set_ylabel('L2 norm')
+        ax.set_title('Diagnosis conditioner weight norm')
+        ax.legend(loc='upper left')
+
+        # Panel 3 — per-layer bridge γ norms (blocks 2, 5, 8, 11).
+        if self.bridge_gamma_per_layer and n_panels == 3:
+            ax = axes[2]
+            block_labels = ['block 2', 'block 5', 'block 8', 'block 11']
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+            per_layer = np.array(self.bridge_gamma_per_layer[:epoch])  # (epoch, n_layers)
+            for i in range(min(self.num_bridge_layers, per_layer.shape[1])):
+                label = block_labels[i] if i < len(block_labels) else f'layer {i}'
+                ax.plot(x, per_layer[:, i], color=colors[i % len(colors)], lw=3, label=label)
+            ax.axhline(0, color='k', lw=1, ls=':')
+            ax.set_xlabel('epoch')
+            ax.set_ylabel('mean |γ weight|')
+            ax.set_title('Bridge FiLM γ per ViT scale — which scale responds first?')
+            ax.legend(loc='upper left')
+
+        plt.tight_layout()
+        fig.savefig(join(output_folder, 'film_progress.png'))
+        plt.close()
 
 
 class meddinov3_3d_chd_film_d8_Trainer(meddinov3_3d_centering_d8_primus_multiscale_Trainer):
+
+    def __init__(self, plans, configuration, fold, dataset_json,
+                 unpack_dataset=True, device=torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        # Replace the standard logger with the FiLM-aware one.
+        # Do it here (after super().__init__ which sets self.logger) so checkpoint
+        # loading still works — load_checkpoint calls logger.load_checkpoint which
+        # just replaces the dict, so the subclass keys are re-added on next log().
+        self.logger = FiLMLogger(num_bridge_layers=4)
 
     def _do_i_compile(self):
         # The diagnosis reaches forward() through a mutable attribute
         # (_pending_diagnosis), changed every step/case. Disable torch.compile so
         # dynamo cannot bake or guard it stale; correctness > a little speed here.
         return False
+
+    # ------------------------------------------------------------------ FiLM monitoring
+    @torch.no_grad()
+    def _collect_film_stats(self):
+        """Return (bridge_gamma, bridge_beta, bridge_per_layer, dec_gamma, dec_beta, cond_norm).
+
+        All values are mean absolute weight magnitudes — a proxy for how much the
+        conditioning is influencing features. Zero = FiLM hasn't activated yet.
+        """
+        net = getattr(self.network, "_orig_mod", self.network)
+
+        def _mean_abs(param_list):
+            if not param_list:
+                return 0.0
+            return float(np.mean([p.abs().mean().item() for p in param_list]))
+
+        bridge_gamma, bridge_beta, bridge_per_layer = 0.0, 0.0, []
+        if getattr(net, 'bridge_film', None) is not None:
+            gammas = [m.to_gamma.weight for m in net.bridge_film]
+            betas  = [m.to_beta.weight  for m in net.bridge_film]
+            bridge_gamma = _mean_abs(gammas)
+            bridge_beta  = _mean_abs(betas)
+            bridge_per_layer = [float(g.abs().mean().item()) for g in gammas]
+
+        dec_gamma, dec_beta = 0.0, 0.0
+        dec_stages = getattr(getattr(net, 'up_projection', None), 'stage_film', None)
+        if dec_stages is not None:
+            dec_gamma = _mean_abs([m.to_gamma.weight for m in dec_stages])
+            dec_beta  = _mean_abs([m.to_beta.weight  for m in dec_stages])
+
+        cond_norm = float(sum(
+            p.norm().item() for p in net.conditioner.parameters()
+        ))
+
+        return bridge_gamma, bridge_beta, bridge_per_layer, dec_gamma, dec_beta, cond_norm
+
+    def on_epoch_end(self):
+        # Measure FiLM stats BEFORE super() so they are logged for the current epoch.
+        bg, bb, bpl, dg, db, cn = self._collect_film_stats()
+
+        # Log into our FiLMLogger (base log() contract: one scalar per epoch).
+        self.logger.log('film_bridge_gamma_norm',   bg, self.current_epoch)
+        self.logger.log('film_bridge_beta_norm',    bb, self.current_epoch)
+        self.logger.log('film_decoder_gamma_norm',  dg, self.current_epoch)
+        self.logger.log('film_decoder_beta_norm',   db, self.current_epoch)
+        self.logger.log('conditioner_weight_norm',  cn, self.current_epoch)
+        self.logger.bridge_gamma_per_layer.append(bpl)
+
+        # Print a human-readable summary to the training log every epoch.
+        layer_str = '  '.join(f'blk{l}={v:.4f}' for l, v in zip([2,5,8,11], bpl)) if bpl else 'n/a'
+        self.print_to_log_file(
+            f'[FiLM] bridge γ={bg:.5f}  β={bb:.5f}  |  dec γ={dg:.5f}  β={db:.5f}  |  '
+            f'cond_norm={cn:.4f}  |  per_layer: {layer_str}',
+            also_print_to_console=False,
+        )
+        if bg < 1e-6 and self.current_epoch > 20:
+            self.print_to_log_file(
+                '[FiLM] WARNING: bridge γ still near zero at epoch '
+                f'{self.current_epoch} — diagnosis conditioning has not activated. '
+                'Check optimizer group coverage and gradient flow.',
+                also_print_to_console=True,
+            )
+
+        super().on_epoch_end()
 
     # ------------------------------------------------------------------ network
     @staticmethod
