@@ -44,11 +44,11 @@ from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.primus_chd import (
     Primus_Multiscale3D_CHD,
     film_flags_from_env,
 )
-from nnunetv2.training.logging.nnunet_logger import nnUNetLogger
+from nnunetv2.training.logging.meddino_logger import MedDINOLogger
 from batchgenerators.utilities.file_and_folder_operations import join
 
 
-class FiLMLogger(nnUNetLogger):
+class FiLMLogger(MedDINOLogger):
     """Extends nnUNetLogger with per-epoch FiLM activity tracking.
 
     Tracks mean absolute value of FiLM γ (scale) and β (shift) weights across

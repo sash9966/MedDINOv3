@@ -1744,6 +1744,11 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
             self.batch_size = int(bs)
             print(f"[meddinov3_3d] batch_size overridden to {self.batch_size} "
                   f"via MEDDINOV3_BATCH_SIZE")
+        # Richer progress.png: per-class Dice + ViT gradient/weight diagnostics.
+        # (FiLM trainer replaces this with its own FiLMLogger, which subclasses
+        # MedDINOLogger, so the extra keys still exist there.)
+        from nnunetv2.training.logging.meddino_logger import MedDINOLogger
+        self.logger = MedDINOLogger()
 
     def _log_gpu_memory(self, tag: str = "") -> None:
         """Print peak/free GPU memory to the training log, then reset peak stats.
@@ -1770,10 +1775,116 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         torch.cuda.reset_peak_memory_stats(dev)
 
     def on_epoch_end(self):
-        # Log GPU high-water mark for this epoch, then reset, before the parent
-        # does its checkpointing/plotting.
+        # Log GPU high-water mark + ViT diagnostics for this epoch, then let the
+        # parent do its checkpointing/plotting (the plot reads what we just logged).
         self._log_gpu_memory()
+        self._log_vit_diagnostics()
         super().on_epoch_end()
+
+    def _meddino_unwrap(self):
+        net = self.network
+        if self.is_ddp:
+            net = net.module
+        if isinstance(net, OptimizedModule):
+            net = net._orig_mod
+        return net
+
+    def _log_vit_to_logger(self, key, value):
+        """Log a scalar only if the active logger declares the key (MedDINOLogger)."""
+        try:
+            if key in self.logger.my_fantastic_logging:
+                self.logger.log(key, float(value), self.current_epoch)
+        except Exception:
+            pass
+
+    def _collect_grad_norms(self):
+        """Per-param-group gradient L2 norm from the last train batch (post-unscale).
+
+        Grads from the final train_step persist (validation never backprops and the
+        next epoch's zero_grad has not run yet), so this is a one-batch snapshot —
+        noisy per epoch but a reliable trend for spotting vanishing/exploding groups.
+        """
+        import math as _math
+        want = {'decoder': float('nan'), 'patch_embed_3d': float('nan'),
+                'depth_pos_embed': float('nan'), 'backbone': float('nan')}
+        try:
+            for pg in self.optimizer.param_groups:
+                name = pg.get('name')
+                if name not in want:
+                    continue
+                sq, seen = 0.0, False
+                for p in pg['params']:
+                    if p.grad is not None:
+                        sq += float(p.grad.detach().float().pow(2).sum().item()); seen = True
+                want[name] = _math.sqrt(sq) if seen else float('nan')
+        except Exception:
+            pass
+        return want
+
+    def _collect_weight_stats(self):
+        import math as _math
+        out = {'patch_embed_center_absmean': float('nan'),
+               'patch_embed_offcenter_absmean': float('nan'),
+               'depth_pe_weight_norm': float('nan'),
+               'backbone_weight_norm': float('nan'),
+               'adapter_identity_dev': float('nan')}
+        try:
+            net = self._meddino_unwrap()
+            enc = net.dino_encoder
+            with torch.no_grad():
+                w = enc.patch_embed.proj.weight.detach()  # (out, in, d_patch, P, P)
+                d = w.shape[2]
+                c = d // 2
+                out['patch_embed_center_absmean'] = float(w[:, :, c].abs().mean().item())
+                if d > 1:
+                    off = torch.cat([w[:, :, :c], w[:, :, c + 1:]], dim=2)
+                    out['patch_embed_offcenter_absmean'] = float(off.abs().mean().item())
+                else:
+                    out['patch_embed_offcenter_absmean'] = out['patch_embed_center_absmean']
+
+                out['depth_pe_weight_norm'] = float(enc.depth_pos_embed.weight.detach().norm().item())
+
+                exclude = {id(p) for p in enc.patch_embed.parameters()}
+                exclude |= {id(p) for p in enc.depth_pos_embed.parameters()}
+                sq = 0.0
+                for p in enc.parameters():
+                    if id(p) not in exclude:
+                        sq += float(p.detach().float().pow(2).sum().item())
+                out['backbone_weight_norm'] = _math.sqrt(sq)
+
+                adapter = getattr(net, 'input_adapter', None)
+                if adapter is not None:
+                    W = adapter.weight.detach().reshape(adapter.weight.shape[0], adapter.weight.shape[1])
+                    I = torch.eye(W.shape[0], device=W.device, dtype=W.dtype)
+                    dev = float((W - I).norm().item())
+                    if adapter.bias is not None:
+                        dev += float(adapter.bias.detach().norm().item())
+                    out['adapter_identity_dev'] = dev
+        except Exception:
+            pass
+        return out
+
+    def _log_vit_diagnostics(self):
+        grads = self._collect_grad_norms()
+        self._log_vit_to_logger('grad_decoder', grads['decoder'])
+        self._log_vit_to_logger('grad_patch_embed', grads['patch_embed_3d'])
+        self._log_vit_to_logger('grad_depth_pe', grads['depth_pos_embed'])
+        self._log_vit_to_logger('grad_backbone', grads['backbone'])
+
+        w = self._collect_weight_stats()
+        for k, v in w.items():
+            self._log_vit_to_logger(k, v)
+
+        # Compact line in the text log for grep-based debugging without the image.
+        self.print_to_log_file(
+            f"[ViT] grad dec={grads['decoder']:.2e} pe={grads['patch_embed_3d']:.2e} "
+            f"dpe={grads['depth_pos_embed']:.2e} bb={grads['backbone']:.2e} | "
+            f"patch_embed |w| centre={w['patch_embed_center_absmean']:.2e} "
+            f"off={w['patch_embed_offcenter_absmean']:.2e} | "
+            f"depth_pe_norm={w['depth_pe_weight_norm']:.3f} "
+            f"backbone_norm={w['backbone_weight_norm']:.1f} "
+            f"adapter_dev={w['adapter_identity_dev']:.2e}"
+        )
 
     def initialize(self):
         super().initialize()
@@ -1797,6 +1908,26 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
                 f"  If ratio > 4, increase MEDDINOV3_D_PATCH to reduce token count.\n"
                 f"[meddinov3_3d] =======================================================\n"
             )
+
+        # Give the per-class Dice panel readable structure names where possible.
+        try:
+            if hasattr(self.logger, 'class_names'):
+                names = []
+                labels = self.dataset_json.get('labels', {})
+                inv = {}
+                for nm, val in labels.items():
+                    if isinstance(val, (list, tuple)):
+                        continue
+                    try:
+                        inv[int(val)] = nm
+                    except (TypeError, ValueError):
+                        continue
+                for lid in self.label_manager.foreground_labels:
+                    names.append(inv.get(int(lid), f"label {int(lid)}"))
+                if names:
+                    self.logger.class_names = names
+        except Exception:
+            pass
 
     def configure_optimizers(self):
         import os
