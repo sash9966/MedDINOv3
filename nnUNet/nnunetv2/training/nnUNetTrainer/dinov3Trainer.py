@@ -1736,6 +1736,44 @@ class meddinov3_3d_primus_multiscale_Trainer(meddinov3_base_primus_multiscale_Tr
         self.num_epochs = int(_os.environ.get("MEDDINOV3_NUM_EPOCHS", "200"))
         # AdamW on a ViT needs a much tighter grad clip than the SGD-era default of 12.
         self.grad_clip_norm = 1.0
+        # Optional batch-size override (single-GPU / non-DDP). Runs after the parent
+        # _set_batch_size_and_oversample() so it wins. Used to drop to bs=1 for the
+        # memory-heavy d_patch=4 token budget; bump back to 2 when memory allows.
+        bs = _os.environ.get("MEDDINOV3_BATCH_SIZE", None)
+        if bs is not None:
+            self.batch_size = int(bs)
+            print(f"[meddinov3_3d] batch_size overridden to {self.batch_size} "
+                  f"via MEDDINOV3_BATCH_SIZE")
+
+    def _log_gpu_memory(self, tag: str = "") -> None:
+        """Print peak/free GPU memory to the training log, then reset peak stats.
+
+        Called once per epoch so the log shows the actual VRAM high-water mark for
+        the current token budget / batch size (useful when tuning d_patch and bs).
+        """
+        if not torch.cuda.is_available() or self.device.type != 'cuda':
+            return
+        dev = self.device.index if self.device.index is not None else torch.cuda.current_device()
+        gb = 1024 ** 3
+        try:
+            free, total = torch.cuda.mem_get_info(dev)
+        except Exception:
+            free, total = 0, 0
+        peak_alloc = torch.cuda.max_memory_allocated(dev)
+        peak_reserved = torch.cuda.max_memory_reserved(dev)
+        self.print_to_log_file(
+            f"[GPU{tag}] {torch.cuda.get_device_name(dev)} | "
+            f"peak_alloc={peak_alloc / gb:.2f}G  peak_reserved={peak_reserved / gb:.2f}G  "
+            f"free={free / gb:.2f}G / total={total / gb:.2f}G  "
+            f"(batch_size={self.batch_size})"
+        )
+        torch.cuda.reset_peak_memory_stats(dev)
+
+    def on_epoch_end(self):
+        # Log GPU high-water mark for this epoch, then reset, before the parent
+        # does its checkpointing/plotting.
+        self._log_gpu_memory()
+        super().on_epoch_end()
 
     def initialize(self):
         super().initialize()
@@ -2022,6 +2060,29 @@ class meddinov3_3d_centering_d8_primus_multiscale_Trainer(meddinov3_3d_primus_mu
         _os.environ["MEDDINOV3_D_PATCH"] = "8"
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         print("[meddinov3_3d_centering_d8] d_patch=8 locked (centering inflation)")
+
+
+class meddinov3_3d_centering_d4_primus_multiscale_Trainer(meddinov3_3d_primus_multiscale_Trainer):
+    """
+    Centering-inflation, d_patch=4.  Results directory is isolated by class name.
+
+    Hard-codes MEDDINOV3_D_PATCH=4 in __init__ so this trainer always tokenises
+    at d=4 (2400 tokens at the 96x160x160 patch, ~12.2x pretrained) regardless of
+    any env var set by a concurrent job.  This is the finest depth resolution rung
+    and the most memory-hungry: self-attention is O(N^2), so 2400 tokens is ~4x the
+    d=8 attention cost.  Default to MEDDINOV3_BATCH_SIZE=1 in the launch script and
+    bump to 2 only if the per-epoch [GPU] log shows headroom.
+
+    The checkpoint must be inflated with d_patch=4
+    (inflate_weights_3d.py --inflation centering --d_patch 4).
+    """
+
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        import os as _os
+        _os.environ["MEDDINOV3_D_PATCH"] = "4"
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        print("[meddinov3_3d_centering_d4] d_patch=4 locked (centering inflation)")
 
 
 def build_dinov3_base():
