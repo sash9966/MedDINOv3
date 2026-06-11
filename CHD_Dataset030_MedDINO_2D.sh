@@ -132,95 +132,90 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# Phase 3 — Verify splits file (no test-case leak)
-# Checks that every case in splits_final.json exists
-# in imagesTr and NOT in imagesTs.
+# Phase 3 — Regenerate splits_final.json from imagesTr only
+# The existing splits_final.json may have been created when test cases
+# were part of the dataset. This phase regenerates a clean split using
+# only the current imagesTr cases (seed=12345, 5-fold CV, same as nnUNet).
+# Backs up the old file before overwriting.
 # ─────────────────────────────────────────────
-if is_done "p3_verify_splits"; then
-    echo "[SKIP] Phase 3: splits verification already passed"
+if is_done "p3_clean_splits"; then
+    echo "[SKIP] Phase 3: splits already regenerated from imagesTr"
 else
     echo "================================================================"
-    echo "Phase 3: Verifying splits_final.json — no test-case contamination"
+    echo "Phase 3: Regenerating splits_final.json from imagesTr cases only"
     echo "================================================================"
-    cat > /tmp/d030_2d_verify_splits.py << 'PYEOF'
-import json, os, sys, re
+    cat > /tmp/d030_2d_regen_splits.py << 'PYEOF'
+import json, os, sys, re, shutil
+import numpy as np
+from sklearn.model_selection import KFold
 
-splits_file   = sys.argv[1]
-imagesTr_dir  = sys.argv[2]
-imagesTs_dir  = sys.argv[3]
-preprocessed  = sys.argv[4]
+splits_file  = sys.argv[1]
+imagesTr_dir = sys.argv[2]
+imagesTs_dir = sys.argv[3]
 
-# Build sets of known training and test case IDs
 def strip_suffix(name):
     return re.sub(r'_\d{4}\.nii\.gz$', '', name)
 
-tr_ids = {strip_suffix(f) for f in os.listdir(imagesTr_dir) if f.endswith('.nii.gz')}
+tr_ids = sorted({strip_suffix(f) for f in os.listdir(imagesTr_dir) if f.endswith('.nii.gz')})
 ts_ids = {strip_suffix(f) for f in os.listdir(imagesTs_dir) if f.endswith('.nii.gz')}
 
 print(f"imagesTr cases : {len(tr_ids)}")
 print(f"imagesTs cases : {len(ts_ids)}")
 
-# Check splits file exists
-if not os.path.isfile(splits_file):
-    print(f"ERROR: {splits_file} does not exist — run training first to generate it, or check preprocessing.")
+overlap = set(tr_ids) & ts_ids
+if overlap:
+    print(f"FATAL: {len(overlap)} cases exist in BOTH imagesTr and imagesTs — fix the dataset first.")
+    for k in sorted(overlap): print(f"  {k}")
     sys.exit(1)
 
+# Check if existing split is already clean
+needs_regen = True
+if os.path.isfile(splits_file):
+    existing = json.load(open(splits_file))
+    all_split_ids = set()
+    for fold in existing:
+        all_split_ids.update(fold.get('train', []))
+        all_split_ids.update(fold.get('val', []))
+    leaked = all_split_ids & ts_ids
+    unknown = all_split_ids - set(tr_ids) - ts_ids
+    if not leaked and not unknown:
+        print("Existing splits_final.json is already clean — no regeneration needed.")
+        print(f"Fold 0: {len(existing[0]['train'])} train / {len(existing[0]['val'])} val")
+        needs_regen = False
+    else:
+        print(f"Existing splits_final.json has {len(leaked)} test-case leaks and {len(unknown)} unknown IDs — regenerating.")
+        backup = splits_file + ".contaminated_backup"
+        shutil.copy(splits_file, backup)
+        print(f"Backed up to: {backup}")
+
+if needs_regen:
+    kf = KFold(n_splits=5, shuffle=True, random_state=12345)
+    splits = []
+    arr = np.array(tr_ids)
+    for train_idx, val_idx in kf.split(arr):
+        splits.append({'train': list(arr[train_idx]), 'val': list(arr[val_idx])})
+    json.dump(splits, open(splits_file, 'w'), indent=4)
+    print(f"Wrote clean splits_final.json with {len(tr_ids)} imagesTr cases.")
+    print(f"Fold 0: {len(splits[0]['train'])} train / {len(splits[0]['val'])} val")
+
+# Final safety check: fold 0 must have zero test-case overlap
 splits = json.load(open(splits_file))
-print(f"splits_final.json: {len(splits)} folds")
-
-leaked_into_train = []
-leaked_into_val   = []
-
-for fold_idx, fold in enumerate(splits):
-    for key in fold.get('train', []):
-        if key in ts_ids:
-            leaked_into_train.append((fold_idx, key))
-    for key in fold.get('val', []):
-        if key in ts_ids:
-            leaked_into_val.append((fold_idx, key))
-    # also check that all split cases are actually in imagesTr
-    unknown = [k for k in fold.get('train', []) + fold.get('val', []) if k not in tr_ids]
-    if unknown:
-        print(f"  WARNING fold {fold_idx}: {len(unknown)} split cases not in imagesTr: {unknown[:5]}{'...' if len(unknown)>5 else ''}")
-
-if leaked_into_train:
-    print(f"\nDATA LEAK DETECTED: {len(leaked_into_train)} test cases in training splits:")
-    for fi, k in leaked_into_train:
-        print(f"  fold {fi} train: {k}")
+f0_leak_tr  = [k for k in splits[0]['train'] if k in ts_ids]
+f0_leak_val = [k for k in splits[0]['val']   if k in ts_ids]
+if f0_leak_tr or f0_leak_val:
+    print(f"\nFATAL: fold 0 still contaminated after regeneration — aborting.")
     sys.exit(2)
-
-if leaked_into_val:
-    print(f"\nDATA LEAK DETECTED: {len(leaked_into_val)} test cases in validation splits:")
-    for fi, k in leaked_into_val:
-        print(f"  fold {fi} val: {k}")
-    sys.exit(2)
-
-# Check preprocessed folder only has training cases
-preproc_ids = set()
-if os.path.isdir(preprocessed):
-    for f in os.listdir(preprocessed):
-        if f.endswith('.npz') or f.endswith('.npy'):
-            preproc_ids.add(re.sub(r'\.(npz|npy)$', '', f))
-leaked_preproc = preproc_ids & ts_ids
-if leaked_preproc:
-    print(f"\nDATA LEAK DETECTED: {len(leaked_preproc)} test cases in preprocessed 2D folder:")
-    for k in sorted(leaked_preproc):
-        print(f"  {k}")
-    sys.exit(2)
-
-print("\nSplit verification PASSED — no test cases in training or validation splits.")
-print(f"Fold 0: {len(splits[0]['train'])} train / {len(splits[0]['val'])} val cases")
+print("Fold 0 verified CLEAN — safe to train.")
 PYEOF
-    python3 /tmp/d030_2d_verify_splits.py \
+    python3 /tmp/d030_2d_regen_splits.py \
         "${SPLITS_FILE}" \
         "${RAW_DATA_DIR}/imagesTr" \
-        "${RAW_DATA_DIR}/imagesTs" \
-        "${PREPROCESSED_2D}"
-    mark_done "p3_verify_splits"
+        "${RAW_DATA_DIR}/imagesTs"
+    mark_done "p3_clean_splits"
 fi
 
 # ─────────────────────────────────────────────
-# Phase 4 — MedDINOv3 2D training (fold 0)
+# Phase 4 — MedDINOv3 2D training (fold 0 only)
 # ─────────────────────────────────────────────
 echo "================================================================"
 echo "Phase 4: MedDINOv3 2D training — fold 0  (100 epochs)"
