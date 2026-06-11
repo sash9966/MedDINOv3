@@ -74,8 +74,9 @@ export MEDDINOV3_3D_CHECKPOINT="${INFLATED_CKPT}"
 export MEDDINOV3_D_PATCH="${D_PATCH}"
 export MEDDINOV3_NUM_EPOCHS=500
 export MEDDINOV3_BACKBONE_LR_SCALE=0.1
-# Start safe: bs=1 for the 2400-token budget. Bump to 2 if the [GPU] log shows headroom.
-export MEDDINOV3_BATCH_SIZE=1
+# bs=2 (bumped from the initial bs=1 trial). Watch the per-epoch [GPU] line in the
+# training log; if it OOMs at the 2400-token budget, drop back to 1.
+export MEDDINOV3_BATCH_SIZE=2
 
 IN_DIR="${nnUNet_raw}/${DATASET_NAME}/imagesTs"
 PRED_DIR="${nnUNet_results}/${DATASET_NAME}/predictions/MedDINO_3d_ashwin_d4"
@@ -103,7 +104,7 @@ printf "║  %-66s ║\n" "SLURM Job    : ${SLURM_JOB_ID:-manual}  node=${SLURMD
 printf "║  %-66s ║\n" "Dataset      : ${DATASET_NAME}  (ID=${DATASET_ID})"
 printf "║  %-66s ║\n" "Trainer      : ${TRAINER_3D}"
 printf "║  %-66s ║\n" "d_patch      : ${D_PATCH}  (2400 tokens, ~12.2x pretrained)"
-printf "║  %-66s ║\n" "batch_size   : ${MEDDINOV3_BATCH_SIZE}  (bump to 2 if GPU log has headroom)"
+printf "║  %-66s ║\n" "batch_size   : ${MEDDINOV3_BATCH_SIZE}  (drop to 1 if the [GPU] log OOMs)"
 printf "║  %-66s ║\n" "Inflation    : Ashwin channel-averaging (sum->redistribute->depth-tile)"
 printf "║  %-66s ║\n" "Optimizer    : AdamW, warmup=10ep, clip=1.0, backbone_lr=0.1"
 printf "║  %-66s ║\n" "Epochs       : ${MEDDINOV3_NUM_EPOCHS}"
