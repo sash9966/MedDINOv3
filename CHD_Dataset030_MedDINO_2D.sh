@@ -220,14 +220,20 @@ fi
 echo "================================================================"
 echo "Phase 4: MedDINOv3 2D training — fold 0  (100 epochs)"
 echo "================================================================"
-KEY="2d_D${DATASET_ID}_fold0"
-if is_shared_done "${KEY}"; then
-    echo "[SKIP] ${KEY}"
+# Local (per-run) marker, NOT shared: a shared marker from the earlier leaked-split
+# run would otherwise skip training here and leave Phase 5 predicting from a model
+# folder that has no dataset.json. Also gate on the real checkpoint so a missing /
+# deleted results folder forces a retrain.
+MODEL_DIR="${nnUNet_results}/${DATASET_NAME}/${TRAINER_2D}__nnUNetPlans__2d"
+CKPT_FILE="${MODEL_DIR}/fold_0/checkpoint_final.pth"
+KEY="train_2d_fold0"
+if is_done "${KEY}" && [[ -f "${CKPT_FILE}" ]]; then
+    echo "[SKIP] ${KEY} (checkpoint present: ${CKPT_FILE})"
 else
-    echo "--- ${KEY} ---"
+    echo "--- training fold 0 (clean splits) ---"
     nnUNetv2_train ${DATASET_ID} ${CONFIG_2D} 0 \
         -tr ${TRAINER_2D} --npz
-    mark_shared_done "${KEY}"
+    mark_done "${KEY}"
 fi
 
 # ─────────────────────────────────────────────
@@ -240,16 +246,26 @@ mkdir -p "${PRED_BASE}"
 PRED_2D="${PRED_BASE}/MedDINO_2d_fold0"
 mkdir -p "${PRED_2D}"
 
-if is_shared_done "p5_infer_2d_D${DATASET_ID}"; then
+# Fail loudly if the trained model is missing rather than crashing inside predict
+# with a cryptic dataset.json FileNotFoundError.
+if [[ ! -f "${MODEL_DIR}/dataset.json" || ! -f "${CKPT_FILE}" ]]; then
+    echo "ERROR: trained 2D model not found."
+    echo "  expected: ${MODEL_DIR}/dataset.json  and  ${CKPT_FILE}"
+    echo "  Phase 4 training did not complete (or its results were removed)."
+    echo "  Remove the marker and rerun:  rm ${CKPT_DIR}/train_2d_fold0.done"
+    exit 1
+fi
+
+if is_done "infer_2d_fold0"; then
     echo "[SKIP] inference already done"
 else
-    echo "--- inference ---"
+    echo "--- inference (fold 0) ---"
     nnUNetv2_predict \
         -i "${IN_DIR}" -o "${PRED_2D}" \
         -d ${DATASET_ID} -c ${CONFIG_2D} \
         -f 0 \
         -tr ${TRAINER_2D}
-    mark_shared_done "p5_infer_2d_D${DATASET_ID}"
+    mark_done "infer_2d_fold0"
 fi
 
 # ─────────────────────────────────────────────
