@@ -226,7 +226,31 @@ Input (B, 1, D, H, W)
     <tr><td style="color:var(--muted)">Differential LRs</td><td>decoder ×1.0 · patch_embed_3d ×0.5 (wd=0) · depth_pos_embed ×0.5 (wd=0) · backbone ×BACKBONE_LR_SCALE (default <b>0.1</b>, was 0.3)</td></tr>
     <tr><td style="color:var(--muted)">patch_embed_3d wd=0</td><td>Prevents the inflated pretrained kernel from decaying; for centering init this also keeps the non-centre slices near zero</td></tr>
     <tr><td style="color:var(--muted)">Per-group PolyLR</td><td>Each param group decays from its own initial_lr, not a shared value</td></tr>
-    <tr><td style="color:var(--muted)">d_patch choice</td><td><b>d=16</b> = 600 tok (3.1× pretrained) — safe baseline. d=8 = 1200 tok (6.1×) — push only after d=16 converges.</td></tr>
+    <tr><td style="color:var(--muted)">d_patch choice</td><td><b>d=16</b> = 600 tok (3.1× pretrained) — safe baseline. d=8 = 1200 tok (6.1×) — stable. <b>d=4 = 2400 tok (12.2×)</b> — finest depth; ~4× d=8 attention memory, start bs=1.</td></tr>
+    <tr><td style="color:var(--muted)">MEDDINOV3_BATCH_SIZE</td><td>Env override (single-GPU) applied after _set_batch_size_and_oversample. Flip 1↔2 without code changes; d=4 scripts default to 1.</td></tr>
+    <tr><td style="color:var(--muted)">Per-epoch [GPU] log</td><td>on_epoch_end logs <code>peak_alloc / peak_reserved / free / total (batch_size)</code> to the training log, then resets peak. nvidia-smi snapshot at job start in the .out. Applies to all 3D trainers (d4/d8/d16/FiLM).</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>d=4 head-to-head: centering vs Ashwin <span class="tag amber">queued</span></h3>
+  <p style="color:var(--muted);font-size:13px;margin:6px 0 10px">
+    Identical d=4 token budget (2400 tok, 12.2×), identical training setup, bs=1.
+    The <b>only</b> variable is the patch_embed inflation strategy. Judge on the
+    topology suite (Ao/PA clDice, false-disconnected, switch-flag, Myo fragmentation),
+    not just Dice.
+  </p>
+  <table style="margin-top:8px">
+    <thead><tr><th>Axis</th><th>centering d=4</th><th>Ashwin d=4</th></tr></thead>
+    <tbody>
+      <tr><td style="color:var(--muted)">Trainer</td><td><code>meddinov3_3d_centering_d4_primus_multiscale_Trainer</code></td><td><code>meddinov3_3d_ashwin_d4_primus_multiscale_Trainer</code></td></tr>
+      <tr><td style="color:var(--muted)">Script</td><td><code>CHD_Dataset030_MedDINO_Centering_d4.sh</code></td><td><code>CHD_Dataset030_MedDINO_Ashwin_d4.sh</code></td></tr>
+      <tr><td style="color:var(--muted)">Checkpoint</td><td><code>meddinov3_inflated_center_d4.pth</code></td><td><code>meddinov3_inflated_ashwin_d4.pth</code></td></tr>
+      <tr><td style="color:var(--muted)">Depth axis</td><td>pretrained kernel at center slice (2 of 0–3), rest zero</td><td>kernel tiled across all 4 slices</td></tr>
+      <tr><td style="color:var(--muted)">Depth norm</td><td>none (single live slice)</td><td>none (un-normalised, ~d_patch× magnitude)</td></tr>
+      <tr><td style="color:var(--muted)">HU-window channels</td><td><b>preserved</b> (per-window filters intact)</td><td><b>averaged</b> (sum→redistribute, specialisation lost)</td></tr>
+      <tr><td style="color:var(--muted)">Init behaviour</td><td>faithful 2D model on center slice, magnitude-matched</td><td>not a faithful 2D copy; LayerNorm readjusts early</td></tr>
+    </tbody>
   </table>
 </div>
 </section>
@@ -403,7 +427,9 @@ let experiments = JSON.parse(localStorage.getItem(EXP_KEY)||'null') || [
   {tag:'3d-centering-d16-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=16', status:'queued', notes:'600 tok (3.1×); SGD run plateaued 0.15 — AdamW fix pending'},
   {tag:'3d-ashwin-d16-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_ashwin_primus_multiscale_Trainer', inflation:'Ashwin d=16', status:'queued', notes:'600 tok; Ashwin missing /d_patch → act scale 16× bug (documented)'},
   {tag:'3d-centering-d16-AdamW-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=16', status:'queued', notes:'600 tok (3.1×); 500ep, AdamW, clip=1.0, backbone_lr=0.1, patch_embed wd=0 — SAFE BASELINE, run this first'},
-  {tag:'3d-centering-d8-AdamW-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=8', status:'queued', notes:'1200 tok (6.1×); 500ep, AdamW, clip=1.0, backbone_lr=0.1, patch_embed wd=0 — push only after d=16 converges'},
+  {tag:'3d-centering-d8-AdamW-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_primus_multiscale_Trainer', inflation:'centering d=8', status:'done', notes:'1200 tok (6.1×); STABLE baseline (>0.8 pseudo-Dice). Current reference for d=4 comparison'},
+  {tag:'3d-centering-d4-bs1-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_centering_d4_primus_multiscale_Trainer', inflation:'centering d=4', status:'queued', notes:'2400 tok (12.2×); CHD_..._Centering_d4.sh; bs=1, ~4× d8 attn mem; per-epoch [GPU] log. Head-to-head A vs centering'},
+  {tag:'3d-ashwin-d4-bs1-d030', dataset:'030', config:'3d_fullres', trainer:'meddinov3_3d_ashwin_d4_primus_multiscale_Trainer', inflation:'Ashwin d=4', status:'queued', notes:'2400 tok (12.2×); CHD_..._Ashwin_d4.sh; bs=1; ONLY variable vs centering-d4 = inflation strategy. Compare topology metrics (Ao/PA continuity)'},
 ];
 
 function saveExp(){ localStorage.setItem(EXP_KEY, JSON.stringify(experiments)); }

@@ -2085,6 +2085,31 @@ class meddinov3_3d_centering_d4_primus_multiscale_Trainer(meddinov3_3d_primus_mu
         print("[meddinov3_3d_centering_d4] d_patch=4 locked (centering inflation)")
 
 
+class meddinov3_3d_ashwin_d4_primus_multiscale_Trainer(meddinov3_3d_ashwin_primus_multiscale_Trainer):
+    """
+    Ashwin channel-averaging inflation, d_patch=4.  Results directory is isolated
+    by class name.
+
+    Same d=4 token budget (2400 tokens, ~12.2x pretrained) as
+    meddinov3_3d_centering_d4_primus_multiscale_Trainer, but the patch_embed is
+    built by the Ashwin strategy (inflate_weights_3d_ashwin.py): the 3 HU-window
+    input channels are summed then redistributed equally (per-window specialisation
+    discarded) and the kernel is tiled across ALL depth slices with NO depth
+    normalisation. The only variable vs. the centering d=4 run is therefore the
+    inflation strategy itself — run both and compare.
+
+    The checkpoint must be inflated with inflate_weights_3d_ashwin.py --d_patch 4.
+    Start at MEDDINOV3_BATCH_SIZE=1 (4x the d=8 attention memory).
+    """
+
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        import os as _os
+        _os.environ["MEDDINOV3_D_PATCH"] = "4"
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        print("[meddinov3_3d_ashwin_d4] d_patch=4 locked (Ashwin channel-averaging inflation)")
+
+
 def build_dinov3_base():
     from nnunetv2.training.nnUNetTrainer.dinov3.dinov3.models.vision_transformer import vit_base
     # Initialize model
