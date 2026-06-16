@@ -49,16 +49,42 @@ CHECKLIST_SEED = [
 ]
 
 
+def load_results_index():
+    """Map experiment id -> result row (if current_results.json has metrics)."""
+    p = DASHBOARD_DATA_DIR / "current_results.json"
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+    except Exception:
+        return {}
+    idx = {}
+    for r in data.get("results", []):
+        if r.get("whole_heart_dice") is not None:
+            idx[r["id"]] = r
+    return idx
+
+
 def build_status(registry):
+    results_idx = load_results_index()
     out = []
     for e in list_experiments(registry):
         losses = e.get("losses", {})
         active_losses = [k for k in ("class_balanced", "focal", "tversky", "cldice", "boundary_loss")
                          if losses.get(k)]
         cond = e.get("conditioning", {})
+        res = results_idx.get(e["id"])
+        status = "completed" if res else e.get("status")
+        if res:
+            summary = f"WH {res['whole_heart_dice']:.3f} · cls {res['mean_class_dice']:.3f}"
+            d = res.get("delta_meancls_vs_nnunet")
+            if d is not None:
+                summary += f" (Δcls {d:+.3f} vs nnU-Net)"
+        else:
+            summary = e.get("current_result")
         out.append({
             "id": e["id"], "name": e["name"], "group": e.get("group"),
-            "priority": e.get("priority"), "status": e.get("status"),
+            "priority": e.get("priority"), "status": status,
             "implemented": e.get("implemented"), "enabled": e.get("enabled"),
             "depth": e.get("meddinov3_depth"), "trainer": e.get("trainer"),
             "initialization": e.get("initialization"),
@@ -67,7 +93,7 @@ def build_status(registry):
             "postprocessing": e.get("postprocessing", {}).get("mode", "none"),
             "requires": e.get("requires", []),
             "purpose": e.get("expected_rationale", ""),
-            "result_summary": e.get("current_result"),
+            "result_summary": summary,
         })
     return out
 

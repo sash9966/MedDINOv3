@@ -4,6 +4,8 @@ and emits the expected schema. pytest-compatible AND standalone:
     python tests/test_dashboard_data_schema.py
 """
 
+import atexit
+import glob
 import json
 import os
 import subprocess
@@ -11,6 +13,23 @@ import sys
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DATA = os.path.join(_ROOT, "dashboard_data")
+
+# Snapshot real dashboard_data (e.g. ingested CSV results) and restore on exit so
+# this test's collect_metrics run (which writes null metrics) is non-destructive.
+_SNAPSHOT = {p: open(p, "rb").read() for p in glob.glob(os.path.join(_DATA, "*.json"))}
+_HTML = os.path.join(_ROOT, "dashboard.html")
+if os.path.isfile(_HTML):
+    _SNAPSHOT[_HTML] = open(_HTML, "rb").read()
+
+
+@atexit.register
+def _restore():
+    for p, b in _SNAPSHOT.items():
+        try:
+            with open(p, "wb") as f:
+                f.write(b)
+        except Exception:
+            pass
 
 
 def _regen():

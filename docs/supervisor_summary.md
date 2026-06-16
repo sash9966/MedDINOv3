@@ -9,21 +9,32 @@ structures (pulmonary/great arteries). Current MedDINO whole-heart Dice ≈ 0.89
 have built a config-driven ablation harness so every comparison is on the same
 split and is re-runnable on the coming ~10× expert cohort without code changes.
 
-## Current results (same split; fill blanks as runs complete)
-| Model | WH Dice | Mean class Dice | Ao Dice | PA Dice | HD95 | clDice (Ao/PA) | Notes |
-|------|--------|-----------------|---------|---------|------|----------------|-------|
-| nnU-Net baseline | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _n/a_ | reference |
-| MedDINO d16 | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | 600 tok |
-| MedDINO d8 | ~0.89* | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | current main |
-| MedDINO d4 | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | finest depth |
-| MedDINO d4 (Ashwin) | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | inflation variant |
-| MedDINO + FiLM (oracle dx) | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | upper bound |
-| + clDice (planned) | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | vessel continuity |
-| + post-processing (planned) | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | plausibility |
-| Best / ensemble | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | _TODO_ | — |
+## Current results — held-out test set (32 cases, same split)
+WH = union-mask whole-heart Dice; **Mean cls** = mean of the 7 structure Dice;
+Δcls = mean-class gap vs nnU-Net. HD95 / clDice pending `tools/evaluate_topology.py`.
 
-*whole-heart ~0.89 is the current approximate figure; per-class and same-split
-nnU-Net numbers are pending `collect_metrics.py`.
+| Model | WH | Mean cls | Δcls | LV-BP | RV-BP | LA | RA | Myo | Ao | PA |
+|------|----|----------|------|-------|-------|----|----|-----|----|----|
+| **nnU-Net (DA5 baseline)** | **0.909** | **0.832** | ref | 0.876 | 0.852 | 0.874 | 0.892 | 0.718 | 0.837 | **0.774** |
+| MedDINO **d4** | 0.889 | 0.827 | −0.005 | 0.871 | 0.861 | 0.868 | 0.884 | 0.714 | 0.827 | 0.765 |
+| MedDINO **Ashwin d4** | 0.888 | 0.830 | −0.002 | 0.864 | 0.863 | 0.867 | 0.883 | **0.747** | 0.823 | 0.763 |
+| MedDINO **d8** | 0.886 | 0.821 | −0.011 | 0.865 | 0.846 | 0.857 | 0.869 | 0.733 | 0.821 | 0.758 |
+| MedDINO **FiLM d8** (oracle dx) | 0.882 | 0.813 | −0.019 | 0.875 | 0.830 | 0.853 | 0.855 | 0.721 | 0.809 | 0.747 |
+| MedDINO **d16** | 0.880 | 0.803 | −0.029 | 0.852 | 0.828 | 0.840 | 0.860 | 0.704 | 0.814 | 0.724 |
+| + clDice (planned) | — | — | — | — | — | — | — | — | — | — |
+| + post-processing (planned) | — | — | — | — | — | — | — | — | — | — |
+
+### Key findings so far
+- **nnU-Net still leads** (0.832 mean-class), but MedDINO d4 / Ashwin-d4 are within
+  **0.002–0.005** — effectively on par given n=32.
+- **Depth helps:** d4 > d8 > d16 (0.827 > 0.821 > 0.803) — finer through-plane
+  resolution clearly beats coarser, consistent with the small-structure hypothesis.
+- **Ashwin d4 gives the best myocardium** (0.747, > nnU-Net's 0.718) — the
+  channel-averaged, depth-symmetric inflation helps that class specifically.
+- **FiLM diagnosis conditioning did not help** (0.813 < 0.821 plain d8) — even with
+  oracle diagnosis. Consistent with the FiLM caveat; not pursuing further as-is.
+- **PA is the universal weak class** (0.72–0.77 across all models) — the clear
+  target for the planned clDice / vessel-sampling phase.
 
 ## Ablation priorities
 1. Same-split nnU-Net + MedDINO d16/d8/d4 confirmation.

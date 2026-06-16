@@ -14,8 +14,22 @@ tool derives from it. Switching to the future ~10× cohort is a one-line change
 | `validate_registry.py` | Schema / unique-id / required-field / d16-d8-d4 checks. |
 | `run_ablation.py` | `--list`, `--id ID --dry-run` / `--print-command` / `--run --yes`; filters; writes `results/<id>/manifest.json`. |
 | `generate_slurm.py` | Emit `slurm_generated/<id>.sh` (mirrors cluster header + inflation). **Never submits.** |
-| `collect_metrics.py` | Gather nnUNet `summary.json` + Phase-A `topology_eval/` → `results/summary.{csv,json}`, `dashboard_data/current_results.json`, paired `comparisons.{csv,json}`. |
-| `update_dashboard_data.py` | Build `dashboard_data/*.json` and embed into `dashboard.html` (preserves checklist ticks unless `--reset-checklist`). |
+| `collect_metrics.py` | Gather nnUNet `summary.json` + Phase-A `topology_eval/` → `results/summary.{csv,json}`, `dashboard_data/current_results.json`, paired `comparisons.{csv,json}`. (Use when results live in `$nnUNet_results`.) |
+| `ingest_dice_csvs.py` | Pull external per-case Dice CSVs (the SegmentationDetailStandard `dice_*.csv` files) → `dashboard_data/current_results.json`. (Use when results come from that analysis, not local nnUNet dirs.) |
+| `update_dashboard_data.py` | Build `dashboard_data/*.json` and embed into `dashboard.html`; derives `status: completed` + result summary from whichever metrics are present (preserves checklist ticks unless `--reset-checklist`). |
+
+### Loading real results
+Two sources feed `dashboard_data/current_results.json`; pick the one matching where your numbers live, then run `update_dashboard_data.py`:
+```
+# A) external per-case Dice CSVs (current setup):
+python experiments/ingest_dice_csvs.py --dice_dir /path/to/Dataset030/dice_results
+python experiments/update_dashboard_data.py
+
+# B) local nnUNet result folders:
+python experiments/collect_metrics.py
+python experiments/update_dashboard_data.py
+```
+Note: `collect_metrics.py` overwrites `current_results.json`, so run `ingest_dice_csvs.py` *after* it (or use only one source). The dashboard derives completed-status from the metrics present, and HD95/clDice fill in once `tools/evaluate_topology.py` has run on the prediction folders.
 
 ## Typical flow
 ```

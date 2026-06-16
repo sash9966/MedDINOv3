@@ -5,7 +5,7 @@
       "name": "nnU-Net baseline (same split)",
       "group": "baselines",
       "priority": "high",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": null,
@@ -16,14 +16,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "Reference. Strong medical inductive bias + auto config; hard to beat in small-data 3D.",
-      "result_summary": null
+      "result_summary": "WH 0.909 \u00b7 cls 0.832"
     },
     {
       "id": "meddinov3_current_d16",
       "name": "MedDINO 3D inflated, d16 (current)",
       "group": "baselines",
       "priority": "high",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d16",
@@ -34,14 +34,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "600 tok (3.1x pretrained). Most through-plane context; safe baseline.",
-      "result_summary": null
+      "result_summary": "WH 0.880 \u00b7 cls 0.803 (\u0394cls -0.029 vs nnU-Net)"
     },
     {
       "id": "meddinov3_current_d8",
       "name": "MedDINO 3D inflated, d8 (current)",
       "group": "baselines",
       "priority": "high",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d8",
@@ -52,14 +52,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "1200 tok (6.1x). Stable ~0.85 pseudo-Dice; current main reference.",
-      "result_summary": null
+      "result_summary": "WH 0.886 \u00b7 cls 0.821 (\u0394cls -0.011 vs nnU-Net)"
     },
     {
       "id": "meddinov3_current_d4",
       "name": "MedDINO 3D inflated, d4 (current)",
       "group": "baselines",
       "priority": "high",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d4",
@@ -70,14 +70,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "2400 tok (12.2x). Finest depth; test small-vessel benefit vs cost.",
-      "result_summary": null
+      "result_summary": "WH 0.889 \u00b7 cls 0.827 (\u0394cls -0.005 vs nnU-Net)"
     },
     {
       "id": "ashwin_d4_inflation",
       "name": "Ashwin channel-averaging inflation, d4",
       "group": "inflation_init",
       "priority": "medium",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d4",
@@ -88,7 +88,7 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "Channel-summed, depth-symmetric init. Only variable vs centering-d4 is the inflation strategy.",
-      "result_summary": null
+      "result_summary": "WH 0.888 \u00b7 cls 0.830 (\u0394cls -0.002 vs nnU-Net)"
     },
     {
       "id": "d16_inflated_vs_random3d",
@@ -155,7 +155,7 @@
       "name": "d16 + 1x1x1 adapter (current default)",
       "group": "input_adapter",
       "priority": "medium",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d16",
@@ -166,14 +166,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "Adapter-on reference for the no-adapter contrast.",
-      "result_summary": null
+      "result_summary": "WH 0.880 \u00b7 cls 0.803 (\u0394cls -0.029 vs nnU-Net)"
     },
     {
       "id": "d8_conv1x1x1_adapter",
       "name": "d8 + 1x1x1 adapter (current default)",
       "group": "input_adapter",
       "priority": "medium",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d8",
@@ -184,14 +184,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "",
-      "result_summary": null
+      "result_summary": "WH 0.886 \u00b7 cls 0.821 (\u0394cls -0.011 vs nnU-Net)"
     },
     {
       "id": "d4_conv1x1x1_adapter",
       "name": "d4 + 1x1x1 adapter (current default)",
       "group": "input_adapter",
       "priority": "medium",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d4",
@@ -202,7 +202,7 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "",
-      "result_summary": null
+      "result_summary": "WH 0.889 \u00b7 cls 0.827 (\u0394cls -0.005 vs nnU-Net)"
     },
     {
       "id": "d16_no_adapter",
@@ -249,7 +249,7 @@
       "name": "Depth ablation \u2014 d16",
       "group": "depth",
       "priority": "high",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d16",
@@ -260,14 +260,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "",
-      "result_summary": null
+      "result_summary": "WH 0.880 \u00b7 cls 0.803 (\u0394cls -0.029 vs nnU-Net)"
     },
     {
       "id": "depth_d8",
       "name": "Depth ablation \u2014 d8",
       "group": "depth",
       "priority": "high",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d8",
@@ -278,14 +278,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "",
-      "result_summary": null
+      "result_summary": "WH 0.886 \u00b7 cls 0.821 (\u0394cls -0.011 vs nnU-Net)"
     },
     {
       "id": "depth_d4",
       "name": "Depth ablation \u2014 d4",
       "group": "depth",
       "priority": "high",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d4",
@@ -296,14 +296,14 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "",
-      "result_summary": null
+      "result_summary": "WH 0.889 \u00b7 cls 0.827 (\u0394cls -0.005 vs nnU-Net)"
     },
     {
       "id": "encoder_full_finetune",
       "name": "Encoder full fine-tune (current default)",
       "group": "finetuning",
       "priority": "medium",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d8",
@@ -314,7 +314,7 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "",
-      "result_summary": null
+      "result_summary": "WH 0.886 \u00b7 cls 0.821 (\u0394cls -0.011 vs nnU-Net)"
     },
     {
       "id": "encoder_frozen",
@@ -501,7 +501,7 @@
       "name": "Diagnosis FiLM \u2014 bridge/bottleneck",
       "group": "film",
       "priority": "medium",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d8",
@@ -512,7 +512,7 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "Identity-init FiLM on the 4 ViT grids. Starts == unconditioned d8.",
-      "result_summary": null
+      "result_summary": "WH 0.882 \u00b7 cls 0.813 (\u0394cls -0.019 vs nnU-Net)"
     },
     {
       "id": "diagnosis_film_decoder",
@@ -555,7 +555,7 @@
       "name": "Oracle diagnosis conditioning (upper bound)",
       "group": "diagnosis",
       "priority": "medium",
-      "status": "planned",
+      "status": "completed",
       "implemented": true,
       "enabled": true,
       "depth": "d8",
@@ -566,7 +566,7 @@
       "postprocessing": "none",
       "requires": [],
       "purpose": "True diagnosis at inference = upper bound on conditioning usefulness.",
-      "result_summary": null
+      "result_summary": "WH 0.882 \u00b7 cls 0.813 (\u0394cls -0.019 vs nnU-Net)"
     },
     {
       "id": "predicted_diagnosis_conditioning",
