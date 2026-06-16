@@ -1,0 +1,465 @@
+# =============================================================================
+# ablation_registry.yaml — single source of truth for CHD MedDINO ablations.
+#
+# Each experiment is composed (not hard-coded) into a training command by
+# experiments/run_ablation.py and experiments/generate_slurm.py, by mapping the
+# structured fields below to an existing nnUNet/MedDINO trainer class + env vars.
+#
+# Two harness fields gate execution:
+#   implemented: true   -> maps to a trainer that already exists; runnable now.
+#   implemented: false  -> needs a training-loop hook not yet built; the runner
+#                          will --dry-run / --print-command but refuse --run.
+#   requires: [..]      -> names the missing capability for the planned ones.
+#
+# Reusable across dataset versions: change `dataset_id` / `dataset_version`
+# (e.g. the future ~10x expert cohort) without touching any code.
+# =============================================================================
+
+meta:
+  project: CHD MedDINO 3D Inflation
+  dataset_versions:
+    v1_100cases:   {dataset_id: 30, name: Dataset030_imageCHD_HU, n_cases: ~100, note: "current feasibility cohort"}
+    v2_expert_10x: {dataset_id: null, name: TBD, n_cases: ~1000, note: "future expert-annotated, more diverse cohort"}
+  label_map: {1: LV-BP, 2: RV-BP, 3: LA, 4: RA, 5: Myo, 6: Ao, 7: PA}
+  vessel_labels: [6, 7]          # Ao, PA — used for clDice/centerline/vessel sampling
+  default_split_file: splits_final.json   # relative to nnUNet_preprocessed/<dataset>
+
+# --- shared defaults merged into every experiment via `<<: *def` -------------
+_def: &def
+  enabled: false
+  implemented: false
+  requires: []
+  priority: medium
+  dataset_id: 30
+  dataset_version: v1_100cases
+  folds: [0]
+  seed: 12345
+  model_family: meddinov3        # meddinov3 | nnunet
+  trainer: null
+  config: 3d_fullres
+  meddinov3_depth: null          # d16 | d8 | d4 | null
+  use_3d_inflation: true
+  initialization: inflated       # inflated | random_3d | pretrained_2d | current
+  input_adapter:    {enabled: true,  type: conv1x1x1, init: identity_like}
+  encoder_finetuning: {mode: full,   unfreeze_blocks: null}
+  conditioning:     {enabled: false, type: none, source: none, oracle_at_inference: false, film_locations: []}
+  losses:           {segmentation: dice_ce, class_balanced: false, focal: false, tversky: false, cldice: false, cldice_labels: [], boundary_loss: false, weights: {}}
+  sampling:         {vessel_aware: false, diagnosis_stratified: false, oversample_labels: []}
+  augmentation:     {ct_intensity: default, geometry: default}
+  postprocessing:   {enabled: false, mode: none}
+  env: {}
+  expected_rationale: ""
+  status: planned                # planned | running | completed | failed
+  current_result: null
+  notes: ""
+
+experiments:
+
+  # ============================ BASELINES ===================================
+  - <<: *def
+    id: nnunet_baseline_same_split
+    name: nnU-Net baseline (same split)
+    group: baselines
+    enabled: true
+    implemented: true
+    priority: high
+    model_family: nnunet
+    trainer: nnUNetTrainer
+    use_3d_inflation: false
+    initialization: random_3d
+    input_adapter: {enabled: false, type: none, init: random}
+    expected_rationale: "Reference. Strong medical inductive bias + auto config; hard to beat in small-data 3D."
+    notes: "Must use the SAME splits_final.json as all MedDINO runs for fair comparison."
+
+  - <<: *def
+    id: meddinov3_current_d16
+    name: MedDINO 3D inflated, d16 (current)
+    group: baselines
+    enabled: true
+    implemented: true
+    priority: high
+    meddinov3_depth: d16
+    trainer: meddinov3_3d_centering_d16_primus_multiscale_Trainer
+    initialization: current
+    expected_rationale: "600 tok (3.1x pretrained). Most through-plane context; safe baseline."
+
+  - <<: *def
+    id: meddinov3_current_d8
+    name: MedDINO 3D inflated, d8 (current)
+    group: baselines
+    enabled: true
+    implemented: true
+    priority: high
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_centering_d8_primus_multiscale_Trainer
+    initialization: current
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    expected_rationale: "1200 tok (6.1x). Stable ~0.85 pseudo-Dice; current main reference."
+
+  - <<: *def
+    id: meddinov3_current_d4
+    name: MedDINO 3D inflated, d4 (current)
+    group: baselines
+    enabled: true
+    implemented: true
+    priority: high
+    meddinov3_depth: d4
+    trainer: meddinov3_3d_centering_d4_primus_multiscale_Trainer
+    initialization: current
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    expected_rationale: "2400 tok (12.2x). Finest depth; test small-vessel benefit vs cost."
+
+  # ===================== INFLATION / INITIALIZATION =========================
+  - <<: *def
+    id: ashwin_d4_inflation
+    name: Ashwin channel-averaging inflation, d4
+    group: inflation_init
+    enabled: true
+    implemented: true
+    priority: medium
+    meddinov3_depth: d4
+    trainer: meddinov3_3d_ashwin_d4_primus_multiscale_Trainer
+    initialization: inflated
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    expected_rationale: "Channel-summed, depth-symmetric init. Only variable vs centering-d4 is the inflation strategy."
+
+  - <<: *def
+    id: d16_inflated_vs_random3d
+    name: d16 inflated vs random-3D init
+    group: inflation_init
+    requires: [random_3d_init]
+    meddinov3_depth: d16
+    expected_rationale: "If inflated > random_3d, pretraining transfer is useful in low data."
+
+  - <<: *def
+    id: d8_inflated_vs_random3d
+    name: d8 inflated vs random-3D init
+    group: inflation_init
+    requires: [random_3d_init]
+    meddinov3_depth: d8
+    expected_rationale: "Inflation value at the stable depth."
+
+  - <<: *def
+    id: d4_inflated_vs_random3d
+    name: d4 inflated vs random-3D init
+    group: inflation_init
+    requires: [random_3d_init]
+    meddinov3_depth: d4
+    expected_rationale: "Does pretraining still help at the finest depth?"
+
+  # ============================ INPUT ADAPTER ===============================
+  - <<: *def
+    id: d16_conv1x1x1_adapter
+    name: d16 + 1x1x1 adapter (current default)
+    group: input_adapter
+    enabled: true
+    implemented: true
+    meddinov3_depth: d16
+    trainer: meddinov3_3d_centering_d16_primus_multiscale_Trainer
+    initialization: current
+    notes: "Same run as meddinov3_current_d16 (adapter is on by default)."
+    expected_rationale: "Adapter-on reference for the no-adapter contrast."
+
+  - <<: *def
+    id: d8_conv1x1x1_adapter
+    name: d8 + 1x1x1 adapter (current default)
+    group: input_adapter
+    enabled: true
+    implemented: true
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_centering_d8_primus_multiscale_Trainer
+    initialization: current
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    notes: "Same run as meddinov3_current_d8."
+
+  - <<: *def
+    id: d4_conv1x1x1_adapter
+    name: d4 + 1x1x1 adapter (current default)
+    group: input_adapter
+    enabled: true
+    implemented: true
+    meddinov3_depth: d4
+    trainer: meddinov3_3d_centering_d4_primus_multiscale_Trainer
+    initialization: current
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    notes: "Same run as meddinov3_current_d4."
+
+  - <<: *def
+    id: d16_no_adapter
+    name: d16 without input adapter
+    group: input_adapter
+    requires: [adapter_toggle]
+    meddinov3_depth: d16
+    input_adapter: {enabled: false, type: none, init: random}
+    expected_rationale: "If adapter-on > adapter-off, contrast adaptation matters."
+
+  - <<: *def
+    id: adapter_init_mean_repeat_vs_random
+    name: adapter init — mean-repeat vs random
+    group: input_adapter
+    requires: [adapter_init_modes]
+    input_adapter: {enabled: true, type: conv1x1x1, init: mean_repeat}
+    expected_rationale: "Does identity-like/mean-repeat init beat random for the adapter?"
+
+  # ============================== DEPTH =====================================
+  - <<: *def
+    id: depth_d16
+    name: Depth ablation — d16
+    group: depth
+    enabled: true
+    implemented: true
+    priority: high
+    meddinov3_depth: d16
+    trainer: meddinov3_3d_centering_d16_primus_multiscale_Trainer
+    initialization: current
+    notes: "Depth-comparison view; shares results with meddinov3_current_d16."
+
+  - <<: *def
+    id: depth_d8
+    name: Depth ablation — d8
+    group: depth
+    enabled: true
+    implemented: true
+    priority: high
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_centering_d8_primus_multiscale_Trainer
+    initialization: current
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    notes: "Shares results with meddinov3_current_d8."
+
+  - <<: *def
+    id: depth_d4
+    name: Depth ablation — d4
+    group: depth
+    enabled: true
+    implemented: true
+    priority: high
+    meddinov3_depth: d4
+    trainer: meddinov3_3d_centering_d4_primus_multiscale_Trainer
+    initialization: current
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    notes: "Shares results with meddinov3_current_d4."
+
+  # ============================ FINE-TUNING =================================
+  - <<: *def
+    id: encoder_full_finetune
+    name: Encoder full fine-tune (current default)
+    group: finetuning
+    enabled: true
+    implemented: true
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_centering_d8_primus_multiscale_Trainer
+    initialization: current
+    encoder_finetuning: {mode: full, unfreeze_blocks: null}
+    env: {MEDDINOV3_BATCH_SIZE: "2"}
+    notes: "Current default: full fine-tune, backbone_lr_scale=0.1. Reference for freeze ablations."
+
+  - <<: *def
+    id: encoder_frozen
+    name: Encoder frozen
+    group: finetuning
+    requires: [encoder_freeze]
+    meddinov3_depth: d8
+    encoder_finetuning: {mode: frozen, unfreeze_blocks: 0}
+    expected_rationale: "Tests how much the pretrained encoder needs to move for CECT cardiac."
+
+  - <<: *def
+    id: encoder_last_blocks_unfrozen
+    name: Encoder — last N blocks trainable
+    group: finetuning
+    requires: [encoder_freeze]
+    meddinov3_depth: d8
+    encoder_finetuning: {mode: last_blocks, unfreeze_blocks: 4}
+    expected_rationale: "Partial fine-tune as a compute/overfit compromise."
+
+  - <<: *def
+    id: parameter_efficient_adapter_or_lora
+    name: LoRA / parameter-efficient adapters
+    group: finetuning
+    requires: [lora]
+    meddinov3_depth: d8
+    encoder_finetuning: {mode: lora_or_adapters, unfreeze_blocks: null}
+    notes: "Only if feasible without destabilizing the repo."
+
+  # ==================== SMALL-VESSEL LOSS / SAMPLING ========================
+  - <<: *def
+    id: class_balanced_dice_ce
+    name: Class-balanced Dice-CE
+    group: vessel_loss
+    requires: [class_weighting]
+    meddinov3_depth: d8
+    losses: {segmentation: dice_ce, class_balanced: true, focal: false, tversky: false, cldice: false, cldice_labels: [], boundary_loss: false, weights: {}}
+    expected_rationale: "Stop large chambers dominating small Ao/PA."
+
+  - <<: *def
+    id: focal_or_tversky_small_vessels
+    name: Focal / Tversky for small vessels
+    group: vessel_loss
+    requires: [focal_tversky_loss]
+    meddinov3_depth: d8
+    losses: {segmentation: dice_ce, class_balanced: false, focal: true, tversky: true, cldice: false, cldice_labels: [], boundary_loss: false, weights: {}}
+
+  - <<: *def
+    id: vessel_aware_patch_sampling
+    name: Vessel-aware patch sampling
+    group: vessel_loss
+    requires: [vessel_sampling]
+    meddinov3_depth: d8
+    sampling: {vessel_aware: true, diagnosis_stratified: false, oversample_labels: [6, 7]}
+    expected_rationale: "Oversample patches containing Ao/PA so thin vessels get more gradient."
+
+  - <<: *def
+    id: cldice_pulmonary_great_vessels
+    name: clDice / soft-skeleton loss on Ao+PA
+    group: vessel_loss
+    requires: [cldice_loss]
+    priority: high
+    meddinov3_depth: d8
+    losses: {segmentation: dice_ce, class_balanced: false, focal: false, tversky: false, cldice: true, cldice_labels: [6, 7], boundary_loss: false, weights: {cldice: 0.5}}
+    expected_rationale: "Reward connectivity, not just overlap; primary lever for PA continuity."
+
+  - <<: *def
+    id: boundary_or_hd_loss_optional
+    name: Boundary / HD loss (optional)
+    group: vessel_loss
+    requires: [boundary_loss]
+    meddinov3_depth: d8
+    losses: {segmentation: dice_ce, class_balanced: false, focal: false, tversky: false, cldice: false, cldice_labels: [], boundary_loss: true, weights: {boundary: 0.1}}
+
+  # ==================== DIAGNOSIS / DISEASE TOPOLOGY ========================
+  - <<: *def
+    id: diagnosis_multitask_head
+    name: Diagnosis multi-task head
+    group: diagnosis
+    requires: [diagnosis_multitask_head]
+    meddinov3_depth: d8
+    conditioning: {enabled: true, type: diagnosis_multitask, source: diagnosis_csv, oracle_at_inference: false, film_locations: []}
+    expected_rationale: "Auxiliary diagnosis classification may push the encoder to learn disease-aware features. loss = seg + 0.1*diag."
+
+  - <<: *def
+    id: diagnosis_film_bottleneck
+    name: Diagnosis FiLM — bridge/bottleneck
+    group: film
+    enabled: true
+    implemented: true
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_chd_film_d8_Trainer
+    conditioning: {enabled: true, type: diagnosis_film, source: diagnosis_csv, oracle_at_inference: true, film_locations: [bridge]}
+    env: {CHD_FILM_BRIDGE: "1", CHD_FILM_DECODER: "0", CHD_NUM_DIAGNOSES: "18"}
+    expected_rationale: "Identity-init FiLM on the 4 ViT grids. Starts == unconditioned d8."
+
+  - <<: *def
+    id: diagnosis_film_decoder
+    name: Diagnosis FiLM — decoder
+    group: film
+    enabled: true
+    implemented: true
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_chd_film_d8_Trainer
+    conditioning: {enabled: true, type: diagnosis_film, source: diagnosis_csv, oracle_at_inference: true, film_locations: [decoder]}
+    env: {CHD_FILM_BRIDGE: "0", CHD_FILM_DECODER: "1", CHD_NUM_DIAGNOSES: "18"}
+    expected_rationale: "FiLM after each decoder stage; tests injection location."
+
+  - <<: *def
+    id: diagnosis_film_multiscale
+    name: Diagnosis FiLM — multiscale (bridge+decoder)
+    group: film
+    enabled: true
+    implemented: true
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_chd_film_d8_Trainer
+    conditioning: {enabled: true, type: diagnosis_film, source: diagnosis_csv, oracle_at_inference: true, film_locations: [bridge, decoder]}
+    env: {CHD_FILM_BRIDGE: "1", CHD_FILM_DECODER: "1", CHD_NUM_DIAGNOSES: "18"}
+
+  - <<: *def
+    id: oracle_diagnosis_conditioning
+    name: Oracle diagnosis conditioning (upper bound)
+    group: diagnosis
+    enabled: true
+    implemented: true
+    meddinov3_depth: d8
+    trainer: meddinov3_3d_chd_film_d8_Trainer
+    conditioning: {enabled: true, type: diagnosis_film, source: diagnosis_csv, oracle_at_inference: true, film_locations: [bridge]}
+    env: {CHD_FILM_BRIDGE: "1", CHD_FILM_DECODER: "0", CHD_NUM_DIAGNOSES: "18"}
+    expected_rationale: "True diagnosis at inference = upper bound on conditioning usefulness."
+
+  - <<: *def
+    id: predicted_diagnosis_conditioning
+    name: Predicted-diagnosis conditioning
+    group: diagnosis
+    requires: [diagnosis_predictor]
+    meddinov3_depth: d8
+    conditioning: {enabled: true, type: diagnosis_film, source: predicted_diagnosis, oracle_at_inference: false, film_locations: [bridge]}
+    expected_rationale: "Realistic deployment when diagnosis is unavailable at test time."
+
+  - <<: *def
+    id: text_embedding_diagnosis_conditioning_optional
+    name: Text-embedding diagnosis conditioning (placeholder)
+    group: diagnosis
+    requires: [text_conditioning]
+    conditioning: {enabled: true, type: text_embedding, source: metadata_csv, oracle_at_inference: false, film_locations: [bridge]}
+    notes: "Disabled placeholder; clean interface only, no heavy dependency."
+
+  # ============================ POST-PROCESSING ============================
+  - <<: *def
+    id: connected_component_class_specific
+    name: Class-specific connected-component cleanup
+    group: postproc
+    requires: [postprocessing]
+    meddinov3_depth: d8
+    postprocessing: {enabled: true, mode: class_specific}
+    expected_rationale: "Largest-CC + hole-fill for chambers; tiny-island removal for vessels (without cutting branches)."
+
+  - <<: *def
+    id: vessel_continuity_postprocess
+    name: Vessel continuity post-processing
+    group: postproc
+    requires: [postprocessing]
+    meddinov3_depth: d8
+    postprocessing: {enabled: true, mode: vessel_continuity}
+
+  - <<: *def
+    id: best_model_plus_postprocess
+    name: Best model + post-processing
+    group: postproc
+    requires: [postprocessing]
+    meddinov3_depth: d8
+    postprocessing: {enabled: true, mode: class_specific}
+    notes: "Apply the best post-proc to the best trained model as a separate eval step."
+
+  # ========================== COMBINED BEST ===============================
+  - <<: *def
+    id: best_depth_plus_adapter_plus_vessel_sampling
+    name: Best depth + adapter + vessel-aware sampling
+    group: combined
+    requires: [vessel_sampling]
+    meddinov3_depth: d4
+    sampling: {vessel_aware: true, diagnosis_stratified: false, oversample_labels: [6, 7]}
+
+  - <<: *def
+    id: best_depth_plus_adapter_plus_cldice
+    name: Best depth + adapter + clDice
+    group: combined
+    requires: [cldice_loss]
+    priority: high
+    meddinov3_depth: d4
+    losses: {segmentation: dice_ce, class_balanced: false, focal: false, tversky: false, cldice: true, cldice_labels: [6, 7], boundary_loss: false, weights: {cldice: 0.5}}
+
+  - <<: *def
+    id: best_depth_plus_adapter_plus_diagnosis_multitask
+    name: Best depth + adapter + diagnosis multi-task
+    group: combined
+    requires: [diagnosis_multitask_head]
+    meddinov3_depth: d4
+    conditioning: {enabled: true, type: diagnosis_multitask, source: diagnosis_csv, oracle_at_inference: false, film_locations: []}
+
+  - <<: *def
+    id: best_overall_candidate_for_future_cohort
+    name: Best overall candidate (future 10x cohort)
+    group: combined
+    requires: [cldice_loss, vessel_sampling]
+    dataset_version: v2_expert_10x
+    meddinov3_depth: d4
+    losses: {segmentation: dice_ce, class_balanced: true, focal: false, tversky: false, cldice: true, cldice_labels: [6, 7], boundary_loss: false, weights: {cldice: 0.5}}
+    sampling: {vessel_aware: true, diagnosis_stratified: true, oversample_labels: [6, 7]}
+    notes: "Re-run the winning recipe on the larger expert cohort by switching dataset_version."

@@ -1,0 +1,89 @@
+{
+  "items": [
+    {
+      "id": "chk00",
+      "text": "Confirm fixed split file for current 100-case dataset",
+      "done": false
+    },
+    {
+      "id": "chk01",
+      "text": "Confirm nnU-Net baseline metrics on the same split",
+      "done": false
+    },
+    {
+      "id": "chk02",
+      "text": "Confirm current MedDINO d16/d8/d4 metrics on the same split",
+      "done": false
+    },
+    {
+      "id": "chk03",
+      "text": "Run adapter ablation: no adapter vs 1x1x1 adapter",
+      "done": false
+    },
+    {
+      "id": "chk04",
+      "text": "Run inflation ablation: inflated vs random 3D initialization",
+      "done": false
+    },
+    {
+      "id": "chk05",
+      "text": "Run depth ablation: d16 vs d8 vs d4",
+      "done": false
+    },
+    {
+      "id": "chk06",
+      "text": "Run freeze ablation: frozen vs partial vs full fine-tune",
+      "done": false
+    },
+    {
+      "id": "chk07",
+      "text": "Run vessel-aware sampling ablation",
+      "done": false
+    },
+    {
+      "id": "chk08",
+      "text": "Run class-balanced / focal / Tversky loss ablation",
+      "done": false
+    },
+    {
+      "id": "chk09",
+      "text": "Run clDice / soft-skeleton topology loss for pulmonary/great arteries",
+      "done": false
+    },
+    {
+      "id": "chk10",
+      "text": "Run post-processing ablation for small components and vessel continuity",
+      "done": false
+    },
+    {
+      "id": "chk11",
+      "text": "Run diagnosis multi-task head ablation",
+      "done": false
+    },
+    {
+      "id": "chk12",
+      "text": "Run oracle diagnosis-FiLM ablation",
+      "done": false
+    },
+    {
+      "id": "chk13",
+      "text": "Run predicted-diagnosis conditioning ablation if clinically needed",
+      "done": false
+    },
+    {
+      "id": "chk14",
+      "text": "Compare all completed models to nnU-Net with paired statistics",
+      "done": false
+    },
+    {
+      "id": "chk15",
+      "text": "Generate supervisor summary table and plots",
+      "done": false
+    },
+    {
+      "id": "chk16",
+      "text": "Re-run best ablations on larger expert-annotated cohort when available",
+      "done": false
+    }
+  ]
+}
