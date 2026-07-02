@@ -159,12 +159,38 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# Phase 3 — 3D centering d=4 training (fold 0)
+# Phase 3 — Plan and preprocess (shared across inflation variants for this
+# dataset, flock-protected so Ashwin_d4 and Centering_d4 jobs submitted
+# together don't race on the same preprocessed folder). Dataset051 adds a
+# susceptible-defect label vs Dataset030, so it needs its own fresh
+# nnUNetPlans — this generates it if missing.
+# ─────────────────────────────────────────────
+PREPROCESS_KEY="preprocess_D${DATASET_ID}_3d_fullres"
+if is_shared_done "${PREPROCESS_KEY}"; then
+    echo "[SKIP] Phase 3: 3d_fullres preprocessing already done for ${DATASET_NAME}"
+else
+    echo "================================================================"
+    echo "Phase 3: plan_and_preprocess — ${CONFIG_3D} (${DATASET_NAME})"
+    echo "================================================================"
+    (
+        flock -x 9
+        if ! is_shared_done "${PREPROCESS_KEY}"; then
+            nnUNetv2_plan_and_preprocess \
+                -d ${DATASET_ID} \
+                -c ${CONFIG_3D} \
+                --verify_dataset_integrity
+            mark_shared_done "${PREPROCESS_KEY}"
+        fi
+    ) 9>"${SHARED_CKPT_DIR}/preprocess_D${DATASET_ID}.lock"
+fi
+
+# ─────────────────────────────────────────────
+# Phase 4 — 3D centering d=4 training (fold 0)
 # ─────────────────────────────────────────────
 echo "================================================================"
-echo "Phase 3: 3D centering d=4 training — fold 0  (${MEDDINOV3_NUM_EPOCHS} epochs)"
+echo "Phase 4: 3D centering d=4 training — fold 0  (${MEDDINOV3_NUM_EPOCHS} epochs)"
 echo "================================================================"
-KEY="p3_3d_center_d4_fold0"
+KEY="p4_3d_center_d4_fold0"
 if is_done "${KEY}"; then
     echo "[SKIP] ${KEY}"
 else
@@ -175,22 +201,22 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# Phase 4 — Inference on test set
+# Phase 5 — Inference on test set
 # ─────────────────────────────────────────────
 echo "================================================================"
-echo "Phase 4: Inference"
+echo "Phase 5: Inference"
 echo "================================================================"
 mkdir -p "${PRED_DIR}"
 
-if is_done "p4_infer_3d_center_d4"; then
-    echo "[SKIP] p4_infer_3d_center_d4"
+if is_done "p5_infer_3d_center_d4"; then
+    echo "[SKIP] p5_infer_3d_center_d4"
 else
     nnUNetv2_predict \
         -i "${IN_DIR}" -o "${PRED_DIR}" \
         -d ${DATASET_ID} -c ${CONFIG_3D} \
         -f 0 \
         -tr ${TRAINER_3D}
-    mark_done "p4_infer_3d_center_d4"
+    mark_done "p5_infer_3d_center_d4"
 fi
 
 # ─────────────────────────────────────────────
